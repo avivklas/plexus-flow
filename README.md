@@ -197,6 +197,16 @@ Output:
 
 ---
 
+## Showcase: ML Model Release Pipeline
+
+A fork-join training pipeline with retries, a human approval gate driven by workflow signals, and automatic saga rollback on rejection. See [examples/mlrelease](examples/mlrelease/README.md).
+
+```bash
+go run ./examples/mlrelease --decision approve   # or: --decision reject
+```
+
+---
+
 ## Code Example: Defining a Saga in Go
 
 ```go
