@@ -19,6 +19,7 @@ import (
 	"github.com/avivklas/plexus/pkg/dedup"
 	"github.com/avivklas/plexus/pkg/machine"
 	"github.com/avivklas/plexus-flow/pkg/api"
+	"github.com/avivklas/plexus-flow/pkg/blueprint"
 	"github.com/avivklas/plexus-flow/pkg/flow"
 	"github.com/avivklas/plexus-flow/pkg/flowstore"
 	"github.com/avivklas/plexus-flow/pkg/graphflow"
@@ -85,6 +86,7 @@ func main() {
 	// 1. Initialize Activity Registry
 	registry := worker.NewRegistry()
 	registerOrderSagaActivities(registry, *simulateFailure, *failStep)
+	blueprint.RegisterBlueprintActivities(registry)
 
 	// 2. Initialize Stores
 	flowStore := flowstore.New()
@@ -179,6 +181,7 @@ func main() {
 	defer apiServer.Close()
 
 	log.Printf("%s[API]%s HTTP API listening on %s%s%s", colorGreen, colorReset, colorBold, apiServer.Addr(), colorReset)
+	log.Printf("%s[Web UI]%s Visualizer Dashboard: %shttp://%s%s", colorCyan, colorReset, colorBold, apiServer.Addr(), colorReset)
 
 	// 7. If --run-example is set, launch the Order Processing Saga!
 	if *runExample {

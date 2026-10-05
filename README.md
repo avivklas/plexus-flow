@@ -197,6 +197,42 @@ Output:
 
 ---
 
+## Showcase: Flow Blueprints & Runtime Observability Dashboard
+
+A visual single-page dashboard serving both **Product Managers** and **Systems Engineers**:
+- **Blueprints Mode**: Defines the customer journey and system contract. Visualizes activities, timeouts, retries, schemas, and traces the automatic reverse-order LIFO compensation path.
+- **Runtime Mode**: Real-time live execution observability with animated DAG state machines (`PENDING`, `RUNNING`, `COMPLETED`, `FAILED`, `COMPENSATING`, `COMPENSATED`), attempt metrics, Exactly-Once Semantics (EOS) verification, and Raft consensus audit trails.
+
+Launch the visualization server:
+
+```bash
+go run ./examples/flowviz
+```
+
+Open **[http://127.0.0.1:8080](http://127.0.0.1:8080)** to explore:
+1. **E-Commerce Order Fulfillment Saga (Classic)**: Inventory reservation, payment authorization, anti-fraud risk scoring, and shipping label dispatch with automatic reverse-order rollback.
+2. **Consumer Loan Underwriting Pipeline**: Parallel fork-join DAG with credit check and AML screening, followed by a human loan officer review gate and fund disbursement.
+
+### 📐 Flow Blueprints (Product Managers & Engineers)
+
+Visualizes how the product is designed before runtime. Toggles between **Product Manager** (business journey, SLAs, compensation safeguards) and **Systems Engineer** (activity contracts, retries, timeouts, schemas):
+
+![Plexus-Flow Blueprints View](docs/images/blueprint_pm_view.png)
+
+### ⚡ Runtime Observability (Live Flow Execution)
+
+Real-time state machine showing exact step durations, attempt counts, Raft consensus commits, and the replicated audit trail:
+
+![Plexus-Flow Runtime View - Completed](docs/images/runtime_completed_view.png)
+
+### 🛡️ Automatic Reverse-Order (LIFO) Saga Compensation
+
+When a downstream step fails (e.g. credit card declined), Plexus-Flow halts execution and triggers automatic LIFO rollback—safely releasing reserved inventory without leaving orphaned transactions:
+
+![Plexus-Flow Runtime View - Compensated Rollback](docs/images/runtime_compensated_view.png)
+
+---
+
 ## Showcase: ML Model Release Pipeline
 
 A fork-join training pipeline with retries, a human approval gate driven by workflow signals, and automatic saga rollback on rejection. See [examples/mlrelease](examples/mlrelease/README.md).

@@ -1,0 +1,1603 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Plexus-Flow | Flow Blueprints &amp; Runtime Visualization</title>
+  <script src="https://www.gstatic.com/antigravity/web/dev/tailwindcss.min.js"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --font-sans: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+      --font-mono: 'JetBrains Mono', monospace;
+    }
+    body {
+      font-family: var(--font-sans);
+    }
+    code, pre, .font-mono {
+      font-family: var(--font-mono);
+    }
+    @keyframes pulse-glow {
+      0%, 100% { box-shadow: 0 0 15px rgba(56, 189, 248, 0.4); border-color: rgba(56, 189, 248, 0.8); }
+      50% { box-shadow: 0 0 25px rgba(56, 189, 248, 0.75); border-color: rgba(56, 189, 248, 1); }
+    }
+    @keyframes pulse-amber {
+      0%, 100% { box-shadow: 0 0 15px rgba(245, 158, 11, 0.4); border-color: rgba(245, 158, 11, 0.8); }
+      50% { box-shadow: 0 0 25px rgba(245, 158, 11, 0.75); border-color: rgba(245, 158, 11, 1); }
+    }
+    @keyframes pulse-purple {
+      0%, 100% { box-shadow: 0 0 15px rgba(168, 85, 247, 0.4); border-color: rgba(168, 85, 247, 0.8); }
+      50% { box-shadow: 0 0 25px rgba(168, 85, 247, 0.8); border-color: rgba(168, 85, 247, 1); }
+    }
+    .node-running {
+      animation: pulse-glow 2s infinite ease-in-out;
+    }
+    .node-compensating {
+      animation: pulse-purple 1.8s infinite ease-in-out;
+    }
+    .scrollbar-thin::-webkit-scrollbar {
+      width: 6px;
+      height: 6px;
+    }
+    .scrollbar-thin::-webkit-scrollbar-track {
+      background: rgba(30, 41, 59, 0.5);
+    }
+    .scrollbar-thin::-webkit-scrollbar-thumb {
+      background: rgba(100, 116, 139, 0.5);
+      border-radius: 3px;
+    }
+  </style>
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen flex flex-col antialiased selection:bg-cyan-500 selection:text-white">
+
+  <!-- Top Navigation Bar -->
+  <header class="border-b border-slate-800 bg-slate-900/90 backdrop-blur sticky top-0 z-40 px-6 py-3.5 flex items-center justify-between">
+    <div class="flex items-center gap-4">
+      <div class="flex items-center gap-3">
+        <div class="h-9 w-9 rounded-lg bg-gradient-to-tr from-cyan-600 via-sky-500 to-indigo-500 flex items-center justify-center font-bold text-white shadow-lg shadow-cyan-500/20">
+          <svg class="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M13 10V3L4 14h7v7l9-11h-7z"/>
+          </svg>
+        </div>
+        <div>
+          <div class="flex items-center gap-2">
+            <span class="font-bold text-lg tracking-tight bg-gradient-to-r from-cyan-400 to-sky-200 bg-clip-text text-transparent">Plexus-Flow</span>
+            <span class="text-xs px-2 py-0.5 rounded-full bg-cyan-950 border border-cyan-800 text-cyan-300 font-mono font-medium">Raft Graph</span>
+          </div>
+          <p class="text-xs text-slate-400 font-normal">Workflow Blueprints &amp; Runtime Observability</p>
+        </div>
+      </div>
+
+      <div class="h-6 w-px bg-slate-800 mx-2"></div>
+
+      <!-- Flow Selector -->
+      <div class="flex items-center gap-2">
+        <label for="blueprintSelect" class="text-xs font-semibold text-slate-400 uppercase tracking-wider">Blueprint:</label>
+        <select id="blueprintSelect" class="bg-slate-800 border border-slate-700 text-slate-200 text-sm rounded-lg px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-cyan-500 font-medium cursor-pointer hover:bg-slate-750 transition">
+          <option value="order-fulfillment-saga">🛒 E-Commerce Order Fulfillment Saga (Classic)</option>
+          <option value="loan-underwriting-pipeline">🏦 Consumer Loan Underwriting (Fork-Join + Gate)</option>
+        </select>
+      </div>
+    </div>
+
+    <!-- Mode Selector & Live Status -->
+    <div class="flex items-center gap-4">
+      <!-- Main Mode Switch (Blueprints vs Runtime) -->
+      <div class="bg-slate-900 border border-slate-800 p-1 rounded-xl flex items-center gap-1 shadow-inner">
+        <button id="modeBlueprintBtn" class="flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-sm font-semibold transition bg-cyan-500 text-white shadow-md shadow-cyan-500/25">
+          <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+          </svg>
+          Blueprints <span class="text-xs opacity-75 font-normal">(PM &amp; Eng)</span>
+        </button>
+        <button id="modeRuntimeBtn" class="flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-sm font-semibold transition text-slate-400 hover:text-slate-200">
+          <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"/>
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+          </svg>
+          Runtime <span class="text-xs opacity-75 font-normal">(Live Flow)</span>
+        </button>
+      </div>
+
+      <!-- Live Connection Pill -->
+      <div id="connectionPill" class="flex items-center gap-2 px-3 py-1.5 rounded-full bg-emerald-950/70 border border-emerald-800 text-emerald-300 text-xs font-mono font-medium">
+        <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+        <span id="connectionText">Raft Active</span>
+      </div>
+    </div>
+  </header>
+
+  <!-- Main View Area -->
+  <main class="flex-1 flex flex-col overflow-hidden">
+
+    <!-- ============================================================== -->
+    <!-- VIEW 1: BLUEPRINTS MODE (For Product Managers & Engineers)    -->
+    <!-- ============================================================== -->
+    <div id="blueprintsView" class="flex-1 flex flex-col overflow-hidden">
+      <!-- Blueprint Sub-header & Persona Switcher -->
+      <div class="bg-slate-900/60 border-b border-slate-800 px-6 py-3 flex items-center justify-between">
+        <div class="flex items-center gap-3">
+          <span class="text-xs font-semibold text-slate-400 uppercase tracking-wider">Perspective:</span>
+          <div class="flex items-center bg-slate-950 border border-slate-800 rounded-lg p-0.5">
+            <button id="personaPMBtn" class="px-3 py-1 rounded text-xs font-semibold transition bg-indigo-600 text-white shadow-sm flex items-center gap-1.5">
+              <span>👔</span> Product Manager
+            </button>
+            <button id="personaEngBtn" class="px-3 py-1 rounded text-xs font-semibold transition text-slate-400 hover:text-slate-200 flex items-center gap-1.5">
+              <span>🛠️</span> Systems Engineer
+            </button>
+          </div>
+          <span id="personaHint" class="text-xs text-slate-400 border-l border-slate-800 pl-3">
+            Showing business intent, customer journey impact, SLAs, and compensation safeguards.
+          </span>
+        </div>
+
+        <!-- Quick Simulation Launcher -->
+        <div class="flex items-center gap-2">
+          <button id="launchHappyScenarioBtn" class="bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold px-3 py-1.5 rounded-lg flex items-center gap-1.5 shadow-md shadow-emerald-900/20 transition">
+            <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"/></svg>
+            Simulate Happy Path
+          </button>
+          <button id="launchFailScenarioBtn" class="bg-amber-600 hover:bg-amber-500 text-white text-xs font-semibold px-3 py-1.5 rounded-lg flex items-center gap-1.5 shadow-md shadow-amber-900/20 transition">
+            <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>
+            Simulate Step Failure &amp; Rollback
+          </button>
+        </div>
+      </div>
+
+      <!-- Blueprint Content Canvas & Side Inspector -->
+      <div class="flex-1 flex overflow-hidden">
+        <!-- Visual DAG Canvas -->
+        <div class="flex-1 overflow-auto p-8 relative flex flex-col items-center justify-start bg-radial-gradient">
+          <div class="w-full max-w-5xl mb-6">
+            <div class="flex items-start justify-between">
+              <div>
+                <h2 id="bpTitle" class="text-2xl font-bold text-white tracking-tight">E-Commerce Order Fulfillment Saga</h2>
+                <p id="bpDesc" class="text-sm text-slate-400 mt-1 max-w-2xl leading-relaxed">
+                  Coordinates inventory lock, payment capture, anti-fraud checks, and shipping label generation. On any step failure, Plexus-Flow triggers automatic LIFO compensating transactions without leaving dangling state.
+                </p>
+              </div>
+              <div class="flex flex-col items-end gap-1">
+                <span class="text-xs font-mono px-2.5 py-1 rounded bg-slate-900 border border-slate-800 text-slate-400">Version 1.2.0</span>
+                <span class="text-xs text-cyan-400 font-medium">Domain: E-Commerce &amp; Retail</span>
+              </div>
+            </div>
+
+            <!-- Legend Banner -->
+            <div class="mt-4 p-3 bg-slate-900/80 border border-slate-800 rounded-xl flex items-center justify-between text-xs text-slate-300">
+              <div class="flex items-center gap-5">
+                <span class="flex items-center gap-1.5"><span class="w-3 h-3 rounded bg-cyan-500/20 border border-cyan-500 inline-block"></span> Normal Activity Step</span>
+                <span class="flex items-center gap-1.5"><span class="w-3 h-3 rounded bg-purple-500/20 border border-purple-500 border-dashed inline-block"></span> Compensating Action (Saga Rollback)</span>
+                <span class="flex items-center gap-1.5"><span class="w-3 h-3 rounded bg-emerald-500/20 border border-emerald-500 inline-block"></span> Terminal State</span>
+              </div>
+              <div class="text-slate-400 italic">Click any step node to inspect its specification</div>
+            </div>
+          </div>
+
+          <!-- Flow DAG Interactive Visual Container -->
+          <div id="bpGraphContainer" class="w-full max-w-5xl relative flex flex-col items-center gap-6 my-auto py-6">
+            <!-- Dynamically rendered via renderBlueprintDAG() -->
+          </div>
+        </div>
+
+        <!-- Blueprint Step Inspector Drawer -->
+        <aside id="bpInspector" class="w-96 border-l border-slate-800 bg-slate-900/95 p-6 flex flex-col overflow-y-auto scrollbar-thin">
+          <div class="flex items-center justify-between pb-4 border-b border-slate-800">
+            <div>
+              <span class="text-xs uppercase font-mono font-bold tracking-wider text-cyan-400" id="inspCategory">Warehouse Step</span>
+              <h3 class="text-lg font-bold text-white mt-0.5" id="inspTitle">Reserve Inventory</h3>
+            </div>
+            <span class="text-xs px-2 py-0.5 rounded bg-slate-800 text-slate-300 font-mono" id="inspActivity">reserve-inventory</span>
+          </div>
+
+          <!-- Inspector Content Sections -->
+          <div class="space-y-5 mt-5 text-sm">
+            <!-- Product Manager Focus Section -->
+            <div id="pmSpecSection" class="space-y-3">
+              <div class="p-3 bg-indigo-950/40 border border-indigo-800/50 rounded-lg">
+                <div class="text-xs font-semibold text-indigo-300 flex items-center gap-1.5 uppercase tracking-wide">
+                  <span>👔</span> Product Intent &amp; SLA
+                </div>
+                <p id="inspPMSummary" class="text-xs text-slate-300 mt-1.5 leading-relaxed">
+                  Locks physical stock in the local distribution center to prevent over-allocation while customer payment processes.
+                </p>
+                <div class="mt-3 pt-2 border-t border-indigo-900/50 flex items-center justify-between text-xs">
+                  <span class="text-slate-400">Target SLA:</span>
+                  <span id="inspSLA" class="font-mono text-indigo-300 font-semibold">&lt; 150 ms</span>
+                </div>
+              </div>
+
+              <!-- Compensation Box -->
+              <div class="p-3 bg-purple-950/40 border border-purple-800/50 rounded-lg">
+                <div class="text-xs font-semibold text-purple-300 flex items-center gap-1.5 uppercase tracking-wide">
+                  <span>🛡️</span> Automatic Saga Compensation
+                </div>
+                <div class="mt-2 flex items-center justify-between">
+                  <span class="text-xs text-slate-400">Rollback Action:</span>
+                  <span id="inspCompAction" class="text-xs font-mono font-semibold text-purple-300">release-inventory</span>
+                </div>
+                <p id="inspRollbackNote" class="text-xs text-slate-300 mt-2 leading-relaxed">
+                  If payment or fraud check fails, reserved units are restored to the active catalog in &lt;200ms.
+                </p>
+              </div>
+            </div>
+
+            <!-- Engineering Specs Section -->
+            <div id="engSpecSection" class="space-y-3">
+              <div class="p-3 bg-slate-950 border border-slate-800 rounded-lg space-y-2">
+                <div class="text-xs font-semibold text-cyan-400 uppercase tracking-wide flex items-center gap-1.5">
+                  <span>🛠️</span> Distributed Systems Contract
+                </div>
+                <div class="grid grid-cols-2 gap-2 text-xs pt-1">
+                  <div>
+                    <span class="text-slate-500">Max Retries:</span>
+                    <div id="inspRetries" class="font-mono text-slate-200 font-semibold">2 Attempts</div>
+                  </div>
+                  <div>
+                    <span class="text-slate-500">Timeout:</span>
+                    <div id="inspTimeout" class="font-mono text-slate-200 font-semibold">5s</div>
+                  </div>
+                  <div class="col-span-2">
+                    <span class="text-slate-500">Idempotency Key:</span>
+                    <div class="font-mono text-xs text-slate-300 bg-slate-900 p-1 rounded mt-0.5">UpstreamID:Term:Index:Seq</div>
+                  </div>
+                </div>
+                <div class="text-xs text-slate-400 mt-2 pt-2 border-t border-slate-800/80" id="inspEngNotes">
+                  Idempotent via Redis counter + Raft graph EOS key.
+                </div>
+              </div>
+
+              <!-- Input Payload Schema -->
+              <div>
+                <span class="text-xs font-semibold text-slate-400 uppercase tracking-wider">Sample Input Contract</span>
+                <pre id="inspInputJSON" class="mt-1 p-2.5 bg-slate-950 border border-slate-800 rounded-lg text-xs font-mono text-slate-300 overflow-x-auto"></pre>
+              </div>
+
+              <!-- Output Payload Schema -->
+              <div>
+                <span class="text-xs font-semibold text-slate-400 uppercase tracking-wider">Sample Output Contract</span>
+                <pre id="inspOutputJSON" class="mt-1 p-2.5 bg-slate-950 border border-slate-800 rounded-lg text-xs font-mono text-emerald-400 overflow-x-auto"></pre>
+              </div>
+            </div>
+          </div>
+        </aside>
+      </div>
+    </div>
+
+
+    <!-- ============================================================== -->
+    <!-- VIEW 2: RUNTIME MODE (Live Flow Observability & Audit Trail)   -->
+    <!-- ============================================================== -->
+    <div id="runtimeView" class="hidden flex-1 flex flex-col overflow-hidden">
+      <!-- Runtime Header Bar -->
+      <div class="bg-slate-900/80 border-b border-slate-800 px-6 py-3 flex items-center justify-between">
+        <div class="flex items-center gap-4">
+          <div>
+            <div class="flex items-center gap-2">
+              <span class="text-xs text-slate-400 font-semibold uppercase">Instance ID:</span>
+              <span id="rtFlowID" class="text-base font-bold font-mono text-white">ORD-7821</span>
+              <span id="rtStatusBadge" class="text-xs px-2.5 py-0.5 rounded-full font-bold uppercase tracking-wider bg-emerald-950 border border-emerald-700 text-emerald-300">
+                COMPLETED
+              </span>
+            </div>
+            <div class="flex items-center gap-3 text-xs text-slate-400 font-mono mt-0.5">
+              <span>Run: <span id="rtRunID" class="text-slate-300">run-1001</span></span>
+              <span>•</span>
+              <span>Duration: <span id="rtDuration" class="text-slate-300 font-semibold">492 ms</span></span>
+              <span>•</span>
+              <span>Raft Graph EOS: <span class="text-emerald-400">Verified</span></span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Runtime Action Controls -->
+        <div class="flex items-center gap-2">
+          <!-- Flow Run Switcher -->
+          <select id="rtRunSelect" class="bg-slate-800 border border-slate-700 text-slate-200 text-xs rounded-lg px-2.5 py-1.5 focus:outline-none focus:ring-1 focus:ring-cyan-500 font-mono">
+            <option value="latest">Latest Active Run</option>
+          </select>
+
+          <!-- Action buttons -->
+          <div id="rtSignalControls" class="hidden flex items-center gap-1.5">
+            <button id="rtApproveBtn" class="bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold px-3 py-1.5 rounded-lg flex items-center gap-1 transition">
+              <span>✓</span> Approve
+            </button>
+            <button id="rtRejectBtn" class="bg-rose-600 hover:bg-rose-500 text-white text-xs font-semibold px-3 py-1.5 rounded-lg flex items-center gap-1 transition">
+              <span>✕</span> Reject
+            </button>
+          </div>
+
+          <button id="rtRerunBtn" class="bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-semibold px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition">
+            <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+            Trigger New Run
+          </button>
+        </div>
+      </div>
+
+      <!-- Runtime Main Workspace (DAG + Live Audit Log) -->
+      <div class="flex-1 flex overflow-hidden">
+        <!-- Live Execution DAG Canvas -->
+        <div class="flex-1 overflow-auto p-8 flex flex-col items-center justify-start bg-slate-950">
+          <!-- Top Info Card -->
+          <div class="w-full max-w-4xl bg-slate-900/60 border border-slate-800 rounded-xl p-4 mb-6 flex items-center justify-between">
+            <div class="flex items-center gap-3">
+              <div id="rtIconBox" class="h-10 w-10 rounded-lg bg-emerald-950 border border-emerald-700 text-emerald-400 flex items-center justify-center font-bold text-lg">
+                ✓
+              </div>
+              <div>
+                <h4 id="rtBannerTitle" class="text-sm font-bold text-white">Saga Executed Successfully</h4>
+                <p id="rtBannerDesc" class="text-xs text-slate-400">All distributed transactions committed deterministically with Raft consensus.</p>
+              </div>
+            </div>
+            <div class="text-right">
+              <div class="text-xs text-slate-400">Raft Quorum Commit</div>
+              <div class="text-xs font-mono text-cyan-400 font-semibold">Strict Sequential Local Read</div>
+            </div>
+          </div>
+
+          <!-- Live Step Nodes Container -->
+          <div id="rtGraphContainer" class="w-full max-w-4xl relative flex flex-col items-center gap-6 my-auto py-4">
+            <!-- Dynamically rendered via renderRuntimeDAG() -->
+          </div>
+        </div>
+
+        <!-- Runtime Side Panel: Step Details & Replicated Audit Trail -->
+        <aside class="w-[420px] border-l border-slate-800 bg-slate-900/95 flex flex-col overflow-hidden">
+          <!-- Tabs for Side Panel -->
+          <div class="flex border-b border-slate-800 bg-slate-900 px-4 pt-3 gap-4">
+            <button id="tabAuditBtn" class="text-xs font-bold uppercase tracking-wider pb-2.5 border-b-2 border-cyan-400 text-cyan-300">
+              Audit Event Log <span id="auditCount" class="text-[11px] px-1.5 py-0.2 rounded-full bg-slate-800 text-slate-300">5</span>
+            </button>
+            <button id="tabStepDetailBtn" class="text-xs font-bold uppercase tracking-wider pb-2.5 border-b-2 border-transparent text-slate-400 hover:text-slate-200">
+              Step Inspector
+            </button>
+          </div>
+
+          <!-- Panel 1: Audit Log -->
+          <div id="panelAudit" class="flex-1 overflow-y-auto p-4 space-y-3 scrollbar-thin">
+            <div class="text-xs text-slate-400 flex items-center justify-between pb-1">
+              <span>Replicated Audit Trail (Raft Consensus)</span>
+              <span class="text-[11px] font-mono text-cyan-400">Nanosecond Order</span>
+            </div>
+            <div id="auditTimeline" class="space-y-2.5">
+              <!-- Dynamically populated -->
+            </div>
+          </div>
+
+          <!-- Panel 2: Step Inspector -->
+          <div id="panelStepDetail" class="hidden flex-1 overflow-y-auto p-4 space-y-4 scrollbar-thin text-xs">
+            <div class="pb-3 border-b border-slate-800">
+              <div class="flex items-center justify-between">
+                <span id="rtStepInspName" class="text-sm font-bold text-white">charge-payment</span>
+                <span id="rtStepInspStatus" class="px-2 py-0.5 rounded font-mono font-bold text-emerald-400 bg-emerald-950 border border-emerald-800">COMPLETED</span>
+              </div>
+              <div class="text-slate-400 mt-1" id="rtStepInspActivity">Activity: charge-payment</div>
+            </div>
+
+            <div class="grid grid-cols-2 gap-2 text-slate-300">
+              <div class="p-2 bg-slate-950 rounded border border-slate-800">
+                <div class="text-slate-500 text-[11px]">Execution Time</div>
+                <div id="rtStepInspDuration" class="font-mono font-semibold text-slate-200 mt-0.5">164 ms</div>
+              </div>
+              <div class="p-2 bg-slate-950 rounded border border-slate-800">
+                <div class="text-slate-500 text-[11px]">Attempt</div>
+                <div id="rtStepInspAttempt" class="font-mono font-semibold text-slate-200 mt-0.5">1 of 2</div>
+              </div>
+            </div>
+
+            <!-- Idempotency Key (EOS) -->
+            <div class="p-2.5 bg-slate-950 rounded-lg border border-slate-800">
+              <div class="text-slate-400 text-[11px] font-semibold uppercase tracking-wider">Deterministic Idempotency Key</div>
+              <div id="rtStepInspKey" class="font-mono text-xs text-cyan-300 mt-1 break-all bg-slate-900 p-1.5 rounded border border-slate-850">
+                node-1-wf:1:4:1
+              </div>
+              <div class="text-[11px] text-slate-500 mt-1">Guarantees Exactly-Once Semantics (EOS) via Downstream Dedup Store</div>
+            </div>
+
+            <!-- Error Box (if applicable) -->
+            <div id="rtStepInspErrorBox" class="hidden p-3 bg-rose-950/60 border border-rose-800 rounded-lg text-rose-300">
+              <div class="font-bold text-[11px] uppercase tracking-wider text-rose-400">Step Failure Reason</div>
+              <p id="rtStepInspError" class="mt-1 font-mono text-xs"></p>
+            </div>
+
+            <!-- Input JSON -->
+            <div>
+              <div class="text-slate-400 font-semibold mb-1">Step Input Payload</div>
+              <pre id="rtStepInspInput" class="p-2.5 bg-slate-950 border border-slate-800 rounded font-mono text-slate-300 overflow-x-auto"></pre>
+            </div>
+
+            <!-- Output JSON -->
+            <div>
+              <div class="text-slate-400 font-semibold mb-1">Step Output Payload</div>
+              <pre id="rtStepInspOutput" class="p-2.5 bg-slate-950 border border-slate-800 rounded font-mono text-emerald-400 overflow-x-auto"></pre>
+            </div>
+          </div>
+        </aside>
+      </div>
+    </div>
+  </main>
+
+  <!-- Run Flow Modal -->
+  <div id="runModal" class="hidden fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4">
+    <div class="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-lg shadow-2xl overflow-hidden">
+      <div class="p-5 border-b border-slate-800 flex items-center justify-between">
+        <h3 class="text-base font-bold text-white flex items-center gap-2">
+          <span>🚀</span> Start Workflow Execution
+        </h3>
+        <button id="closeModalBtn" class="text-slate-400 hover:text-white text-lg font-mono">&times;</button>
+      </div>
+      <div class="p-5 space-y-4">
+        <div>
+          <label class="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1.5">Scenario Preset:</label>
+          <div class="grid grid-cols-2 gap-2" id="modalScenarioGrid">
+            <!-- Populated dynamically -->
+          </div>
+        </div>
+        <div>
+          <label class="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1.5">Workflow ID:</label>
+          <input type="text" id="modalWfID" class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-sm text-slate-200 font-mono focus:outline-none focus:border-cyan-500">
+        </div>
+        <div>
+          <label class="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1.5">Input Payload (JSON):</label>
+          <textarea id="modalInputJSON" rows="6" class="w-full bg-slate-950 border border-slate-800 rounded-lg p-3 text-xs text-slate-200 font-mono focus:outline-none focus:border-cyan-500 leading-relaxed"></textarea>
+        </div>
+      </div>
+      <div class="p-5 border-t border-slate-800 bg-slate-950/50 flex items-center justify-end gap-3">
+        <button id="cancelModalBtn" class="px-4 py-2 rounded-lg text-xs font-semibold text-slate-400 hover:text-white transition">Cancel</button>
+        <button id="executeModalBtn" class="bg-cyan-500 hover:bg-cyan-400 text-white px-5 py-2 rounded-lg text-xs font-bold transition shadow-lg shadow-cyan-500/20 flex items-center gap-1.5">
+          <span>Launch Flow Run</span> &rarr;
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- JavaScript Client Engine -->
+  <script>
+    // State
+    const STATE = {
+      blueprints: {},
+      selectedBpId: 'order-fulfillment-saga',
+      activePersona: 'product_manager',
+      activeView: 'blueprints',
+      liveInstances: [],
+      currentInstance: null,
+      selectedStepName: null,
+      isLiveConnected: false,
+      pollTimer: null
+    };
+
+    const BUILTIN_BLUEPRINTS = {
+      'order-fulfillment-saga': {
+        id: 'order-fulfillment-saga',
+        name: 'E-Commerce Order Fulfillment Saga',
+        version: '1.2.0',
+        domain: 'E-Commerce & Retail',
+        description: 'The canonical distributed transaction saga. Coordinates inventory reservation, payment capture, anti-fraud checks, and shipping dispatch with automated LIFO compensating transactions on failures.',
+        definition: {
+          name: 'order-fulfillment-saga',
+          steps: [
+            { name: 'reserve-inventory', activity: 'reserve-inventory', compensating_action: 'release-inventory', retries: 2, timeout: 5000000000 },
+            { name: 'charge-payment', activity: 'charge-payment', compensating_action: 'refund-payment', retries: 1, timeout: 8000000000, depends_on: ['reserve-inventory'] },
+            { name: 'fraud-risk-score', activity: 'fraud-risk-score', compensating_action: 'flag-for-manual-review', retries: 2, timeout: 4000000000, depends_on: ['charge-payment'] },
+            { name: 'dispatch-shipment', activity: 'dispatch-shipment', compensating_action: 'cancel-shipment', retries: 2, timeout: 6000000000, depends_on: ['fraud-risk-score'] }
+          ]
+        },
+        step_meta: {
+          'reserve-inventory': {
+            title: 'Reserve Warehouse Inventory',
+            category: 'Warehouse & Logistics',
+            summary: 'Locks physical stock units in fulfillment center to prevent over-allocation while payment processes.',
+            rollback_note: 'If subsequent checkout stages fail, locked inventory units are returned to stock pool in <200ms.',
+            sla: 150000000,
+            engineering_notes: 'Synchronous lock with TTL. Idempotency enforced via Upstream Raft ID.',
+            sample_input: { sku: 'SKU-MACBOOK-M4', qty: 1, warehouse: 'WH-WEST-1' },
+            sample_output: { reserved: true, reservation_id: 'RES-55109', stock_remaining: 499 }
+          },
+          'charge-payment': {
+            title: 'Authorize & Capture Payment',
+            category: 'Billing & Payments',
+            summary: 'Charges the customer credit card or wallet via payment gateway. The critical economic transaction.',
+            rollback_note: 'On downstream failure, executes an immediate full refund API call to payment gateway.',
+            sla: 250000000,
+            engineering_notes: 'Exactly-Once Semantics (EOS). Raft Graph dedup engine prevents double charges across retries.',
+            sample_input: { amount: 1999.00, currency: 'USD', token: 'tok_visa_4242' },
+            sample_output: { charged: true, txn_id: 'TXN-8871629', gateway: 'Stripe' }
+          },
+          'fraud-risk-score': {
+            title: 'Anti-Fraud & Risk Assessment',
+            category: 'Risk & Compliance',
+            summary: 'Runs real-time machine learning scoring on device fingerprint, velocity, and geolocation.',
+            rollback_note: 'Triggers refund of funds and releases reserved inventory, flagging account for review.',
+            sla: 120000000,
+            engineering_notes: 'Calls stateless ML fraud model. Short circuit if risk score exceeds threshold 70.',
+            sample_input: { customer_id: 'CUST-992', ip: '198.51.100.42', amount: 1999.00 },
+            sample_output: { risk_score: 14, decision: 'PASS', max_allowed: 70 }
+          },
+          'dispatch-shipment': {
+            title: 'Create Carrier Label & Dispatch',
+            category: 'Logistics Fulfillment',
+            summary: 'Generates FedEx shipping label and pushes tracking details to customer tracking portal.',
+            rollback_note: 'Voids shipping label via carrier API and cancels automated warehouse packing task.',
+            sla: 300000000,
+            engineering_notes: 'Outbound REST call to carrier with exponential backoff on 5xx errors.',
+            sample_input: { service: 'FedEx Priority', weight_kg: 2.1, recipient: 'Sophia Martinez' },
+            sample_output: { tracking_number: 'TRK-FEDEX-9904128', label_url: 'https://cdn.shipping/label/9904128.pdf' }
+          }
+        },
+        scenarios: [
+          {
+            id: 'happy-path',
+            name: '🌟 Happy Path (All Steps Pass)',
+            description: 'Order completes smoothly. Inventory reserved, card charged, fraud cleared, shipping label issued.',
+            mode: 'success',
+            input: { order_id: 'ORD-7821', customer_name: 'Sophia Martinez', total_amount: 1999.00, simulate_fail: '' }
+          },
+          {
+            id: 'payment-failure',
+            name: '💥 Payment Declined (Auto Rollback)',
+            description: 'Card declined due to insufficient funds. Plexus-Flow triggers reverse-order compensation releasing held stock.',
+            mode: 'failure',
+            fail_step: 'charge-payment',
+            fail_reason: 'card_declined: insufficient funds on account',
+            input: { order_id: 'ORD-7822-FAIL', customer_name: 'Marcus Vance', total_amount: 4500.00, simulate_fail: 'charge-payment', fail_reason: 'card_declined: insufficient funds on account' }
+          },
+          {
+            id: 'shipping-failure',
+            name: '⚠️ Carrier Outage (Multi-step Rollback)',
+            description: 'Shipping carrier returns 503. Plexus-Flow rolls back payment first (refund), then inventory (release).',
+            mode: 'failure',
+            fail_step: 'dispatch-shipment',
+            fail_reason: 'shipping_carrier_unavailable: 503 Service Unavailable',
+            input: { order_id: 'ORD-7823-SHIPFAIL', customer_name: 'Elena Rostova', total_amount: 850.00, simulate_fail: 'dispatch-shipment', fail_reason: 'shipping_carrier_unavailable: 503 Service Unavailable' }
+          }
+        ]
+      },
+      'loan-underwriting-pipeline': {
+        id: 'loan-underwriting-pipeline',
+        name: 'Consumer Loan Underwriting & Approval',
+        version: '2.0.1',
+        domain: 'Fintech & Banking',
+        description: 'Fork-join DAG featuring concurrent credit bureau checks and sanctions screening, followed by a human loan officer review gate and fund disbursement.',
+        definition: {
+          name: 'loan-underwriting-pipeline',
+          steps: [
+            { name: 'verify-identity', activity: 'verify-identity', compensating_action: 'revoke-applicant-profile', retries: 1, timeout: 4000000000 },
+            { name: 'credit-bureau-check', activity: 'credit-bureau-check', compensating_action: 'record-inquiry-cancellation', retries: 2, timeout: 5000000000, depends_on: ['verify-identity'] },
+            { name: 'aml-sanctions-screen', activity: 'aml-sanctions-screen', compensating_action: 'clear-compliance-flags', retries: 2, timeout: 4000000000, depends_on: ['verify-identity'] },
+            { name: 'calculate-risk-score', activity: 'calculate-risk-score', retries: 0, timeout: 3000000000, depends_on: ['credit-bureau-check', 'aml-sanctions-screen'] },
+            { name: 'underwriter-approval', activity: 'underwriter-approval', timeout: 300000000000, depends_on: ['calculate-risk-score'] },
+            { name: 'disburse-funds', activity: 'disburse-funds', compensating_action: 'freeze-escrow-transfer', retries: 1, timeout: 6000000000, depends_on: ['underwriter-approval'] }
+          ]
+        },
+        step_meta: {
+          'verify-identity': {
+            title: 'Verify Applicant Identity (KYC)',
+            category: 'Identity & Compliance',
+            summary: 'Validates official government ID, SSN, and biometric match against national registry records.',
+            rollback_note: 'Purges uploaded biometric tokens if application is aborted or flagged.',
+            sla: 200000000,
+            engineering_notes: 'Integrates with Persona/Socure KYC APIs.'
+          },
+          'credit-bureau-check': {
+            title: 'Credit Bureau Pull (Experian)',
+            category: 'Credit Risk (Parallel Fork)',
+            summary: 'Concurrent pull of applicant FICO score, open tradelines, and debt-to-income ratio.',
+            rollback_note: 'Marks credit pull as cancelled so applicant score is not penalized.',
+            sla: 350000000,
+            engineering_notes: 'Async bureau inquiry runs concurrently with AML sanctions screening.'
+          },
+          'aml-sanctions-screen': {
+            title: 'AML & Sanctions Screening',
+            category: 'Compliance (Parallel Fork)',
+            summary: 'Concurrent screening against global OFAC sanctions, Interpol notices, and PEP lists.',
+            rollback_note: 'Clears provisional audit hold markers.',
+            sla: 150000000,
+            engineering_notes: 'Runs in parallel with credit check; both join at risk score calculation.'
+          },
+          'calculate-risk-score': {
+            title: 'Composite Risk Decision Engine (Join)',
+            category: 'Decision Engine',
+            summary: 'Merges credit and compliance results to calculate approved loan tier and interest rate.',
+            sla: 50000000,
+            engineering_notes: 'Join barrier: only executes after both credit bureau and AML steps complete.'
+          },
+          'underwriter-approval': {
+            title: 'Human Underwriter Review Gate',
+            category: 'Human-in-the-Loop',
+            summary: 'Pauses workflow execution and awaits an approval or rejection signal from a certified loan officer.',
+            sla: 86400000000,
+            engineering_notes: 'Driven by workflow signal (POST /api/v1/workflows/{id}/signal).'
+          },
+          'disburse-funds': {
+            title: 'ACH Funds Disbursement',
+            category: 'Treasury & Payout',
+            summary: 'Transfers approved capital to applicant bank account via Federal Reserve ACH network.',
+            rollback_note: 'Triggers transfer recall / escrow freeze if suspicious activity is reported post-approval.',
+            sla: 400000000,
+            engineering_notes: 'Final settlement step in happy path.'
+          }
+        },
+        scenarios: [
+          {
+            id: 'loan-approved',
+            name: '🌟 Fast-Track Approval & Disbursement',
+            description: 'Credit and AML checks pass concurrently, human officer approves, funds are disbursed via ACH.',
+            mode: 'success',
+            input: { application_id: 'LOAN-40291', applicant_name: 'David Chen', requested_amount: 35000.00, auto_approve: true }
+          }
+        ]
+      }
+    };
+
+    window.addEventListener('DOMContentLoaded', () => {
+      STATE.blueprints = { ...BUILTIN_BLUEPRINTS };
+      initEventListeners();
+      seedSimulatedInstance();
+
+      const params = new URLSearchParams(window.location.search);
+      if (params.get('blueprint')) STATE.selectedBpId = params.get('blueprint');
+      if (params.get('persona')) switchPersona(params.get('persona'));
+      if (params.get('run')) {
+        const found = STATE.liveInstances.find(i => i.workflow_id === params.get('run'));
+        if (found) STATE.currentInstance = found;
+      }
+      if (params.get('view')) {
+        switchView(params.get('view'));
+      } else {
+        renderBlueprint();
+      }
+
+      checkServerConnection();
+    });
+
+    async function checkServerConnection() {
+      try {
+        const res = await fetch('/api/v1/blueprints', { signal: AbortSignal.timeout(1500) });
+        if (res.ok) {
+          const list = await res.json();
+          if (Array.isArray(list) && list.length > 0) {
+            list.forEach(bp => { STATE.blueprints[bp.id] = bp; });
+          }
+          setLiveStatus(true);
+          startPolling();
+          return;
+        }
+      } catch (e) {}
+      setLiveStatus(false);
+    }
+
+    function setLiveStatus(isLive) {
+      STATE.isLiveConnected = isLive;
+      const pill = document.getElementById('connectionPill');
+      const text = document.getElementById('connectionText');
+      if (isLive) {
+        pill.className = 'flex items-center gap-2 px-3 py-1.5 rounded-full bg-emerald-950/70 border border-emerald-800 text-emerald-300 text-xs font-mono font-medium';
+        text.textContent = 'Live Raft Cluster Connected';
+      } else {
+        pill.className = 'flex items-center gap-2 px-3 py-1.5 rounded-full bg-indigo-950/70 border border-indigo-800 text-indigo-300 text-xs font-mono font-medium';
+        text.textContent = 'Interactive Simulator Mode';
+      }
+    }
+
+    function startPolling() {
+      if (STATE.pollTimer) clearInterval(STATE.pollTimer);
+      STATE.pollTimer = setInterval(async () => {
+        if (!STATE.isLiveConnected) return;
+        try {
+          const res = await fetch('/api/v1/workflows');
+          if (res.ok) {
+            const list = await res.json();
+            if (Array.isArray(list) && list.length > 0) {
+              STATE.liveInstances = list;
+              updateRunSelectDropdown();
+              if (STATE.currentInstance) {
+                const refreshed = list.find(w => w.workflow_id === STATE.currentInstance.workflow_id);
+                if (refreshed) {
+                  STATE.currentInstance = refreshed;
+                  if (STATE.activeView === 'runtime') {
+                    renderRuntime();
+                  }
+                }
+              }
+            }
+          }
+        } catch (e) {}
+      }, 800);
+    }
+
+    function initEventListeners() {
+      document.getElementById('blueprintSelect').addEventListener('change', (e) => {
+        STATE.selectedBpId = e.target.value;
+        renderBlueprint();
+      });
+
+      document.getElementById('modeBlueprintBtn').addEventListener('click', () => switchView('blueprints'));
+      document.getElementById('modeRuntimeBtn').addEventListener('click', () => switchView('runtime'));
+
+      document.getElementById('personaPMBtn').addEventListener('click', () => switchPersona('product_manager'));
+      document.getElementById('personaEngBtn').addEventListener('click', () => switchPersona('engineer'));
+
+      document.getElementById('launchHappyScenarioBtn').addEventListener('click', () => {
+        const bp = STATE.blueprints[STATE.selectedBpId];
+        const scenario = bp?.scenarios?.[0] || { id: 'happy-path', name: 'Happy Path', mode: 'success', input: {} };
+        launchScenario(scenario);
+      });
+
+      document.getElementById('launchFailScenarioBtn').addEventListener('click', () => {
+        const bp = STATE.blueprints[STATE.selectedBpId];
+        const failScenario = bp?.scenarios?.find(s => s.mode === 'failure') || { id: 'fail', mode: 'failure', fail_step: 'charge-payment' };
+        launchScenario(failScenario);
+      });
+
+      document.getElementById('rtRerunBtn').addEventListener('click', openRunModal);
+      document.getElementById('closeModalBtn').addEventListener('click', closeRunModal);
+      document.getElementById('cancelModalBtn').addEventListener('click', closeRunModal);
+      document.getElementById('executeModalBtn').addEventListener('click', executeModalRun);
+
+      document.getElementById('rtRunSelect').addEventListener('change', (e) => {
+        const wfId = e.target.value;
+        const inst = STATE.liveInstances.find(i => i.workflow_id === wfId);
+        if (inst) {
+          STATE.currentInstance = inst;
+          renderRuntime();
+        }
+      });
+
+      document.getElementById('tabAuditBtn').addEventListener('click', () => switchSideTab('audit'));
+      document.getElementById('tabStepDetailBtn').addEventListener('click', () => switchSideTab('step'));
+
+      document.getElementById('rtApproveBtn').addEventListener('click', () => sendSignal('approve'));
+      document.getElementById('rtRejectBtn').addEventListener('click', () => sendSignal('reject'));
+    }
+
+    function switchView(view) {
+      STATE.activeView = view;
+      const bpBtn = document.getElementById('modeBlueprintBtn');
+      const rtBtn = document.getElementById('modeRuntimeBtn');
+      const bpView = document.getElementById('blueprintsView');
+      const rtView = document.getElementById('runtimeView');
+
+      if (view === 'blueprints') {
+        bpBtn.className = 'flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-sm font-semibold transition bg-cyan-500 text-white shadow-md shadow-cyan-500/25';
+        rtBtn.className = 'flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-sm font-semibold transition text-slate-400 hover:text-slate-200';
+        bpView.classList.remove('hidden');
+        rtView.classList.add('hidden');
+        renderBlueprint();
+      } else {
+        rtBtn.className = 'flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-sm font-semibold transition bg-cyan-500 text-white shadow-md shadow-cyan-500/25';
+        bpBtn.className = 'flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-sm font-semibold transition text-slate-400 hover:text-slate-200';
+        rtView.classList.remove('hidden');
+        bpView.classList.add('hidden');
+        renderRuntime();
+      }
+    }
+
+    function switchPersona(persona) {
+      STATE.activePersona = persona;
+      const pmBtn = document.getElementById('personaPMBtn');
+      const engBtn = document.getElementById('personaEngBtn');
+      const hint = document.getElementById('personaHint');
+      const pmSec = document.getElementById('pmSpecSection');
+
+      if (persona === 'product_manager') {
+        pmBtn.className = 'px-3 py-1 rounded text-xs font-semibold transition bg-indigo-600 text-white shadow-sm flex items-center gap-1.5';
+        engBtn.className = 'px-3 py-1 rounded text-xs font-semibold transition text-slate-400 hover:text-slate-200 flex items-center gap-1.5';
+        hint.textContent = 'Showing business intent, customer journey impact, SLAs, and compensation safeguards.';
+        pmSec.style.opacity = '1';
+        pmSec.style.filter = 'none';
+      } else {
+        engBtn.className = 'px-3 py-1 rounded text-xs font-semibold transition bg-cyan-600 text-white shadow-sm flex items-center gap-1.5';
+        pmBtn.className = 'px-3 py-1 rounded text-xs font-semibold transition text-slate-400 hover:text-slate-200 flex items-center gap-1.5';
+        hint.textContent = 'Showing distributed systems contracts, activity handlers, retries, idempotency, and schemas.';
+      }
+      renderBlueprint();
+    }
+
+    function switchSideTab(tab) {
+      const tabAuditBtn = document.getElementById('tabAuditBtn');
+      const tabStepBtn = document.getElementById('tabStepDetailBtn');
+      const panelAudit = document.getElementById('panelAudit');
+      const panelStep = document.getElementById('panelStepDetail');
+
+      if (tab === 'audit') {
+        tabAuditBtn.className = 'text-xs font-bold uppercase tracking-wider pb-2.5 border-b-2 border-cyan-400 text-cyan-300';
+        tabStepBtn.className = 'text-xs font-bold uppercase tracking-wider pb-2.5 border-b-2 border-transparent text-slate-400 hover:text-slate-200';
+        panelAudit.classList.remove('hidden');
+        panelStep.classList.add('hidden');
+      } else {
+        tabStepBtn.className = 'text-xs font-bold uppercase tracking-wider pb-2.5 border-b-2 border-cyan-400 text-cyan-300';
+        tabAuditBtn.className = 'text-xs font-bold uppercase tracking-wider pb-2.5 border-b-2 border-transparent text-slate-400 hover:text-slate-200';
+        panelStep.classList.remove('hidden');
+        panelAudit.classList.add('hidden');
+      }
+    }
+
+    function renderBlueprint() {
+      const bp = STATE.blueprints[STATE.selectedBpId];
+      if (!bp) return;
+
+      document.getElementById('bpTitle').textContent = bp.name;
+      document.getElementById('bpDesc').textContent = bp.description;
+
+      const container = document.getElementById('bpGraphContainer');
+      container.innerHTML = '';
+
+      const steps = bp.definition.steps;
+      if (!STATE.selectedStepName && steps.length > 0) {
+        STATE.selectedStepName = steps[0].name;
+      }
+
+      if (bp.id === 'loan-underwriting-pipeline') {
+        renderParallelBlueprintDAG(bp, container);
+      } else {
+        renderSequentialBlueprintDAG(bp, container);
+      }
+
+      inspectBlueprintStep(STATE.selectedStepName);
+    }
+
+    function renderSequentialBlueprintDAG(bp, container) {
+      const steps = bp.definition.steps;
+      const isPM = STATE.activePersona === 'product_manager';
+
+      steps.forEach((step, idx) => {
+        const meta = bp.step_meta?.[step.name] || {};
+        const isSelected = STATE.selectedStepName === step.name;
+
+        const card = document.createElement('div');
+        card.className = 'w-full max-w-2xl bg-slate-900 border rounded-2xl p-5 shadow-lg cursor-pointer transition-all duration-200 transform hover:scale-[1.01] ' +
+          (isSelected ? 'border-cyan-500 shadow-cyan-500/20 ring-1 ring-cyan-500 bg-slate-850' : 'border-slate-800 hover:border-slate-700');
+        card.onclick = () => {
+          STATE.selectedStepName = step.name;
+          renderBlueprint();
+        };
+
+        const categoryTag = meta.category || ('Step ' + (idx + 1));
+        const title = meta.title || step.name;
+        const sla = meta.sla ? Math.round(meta.sla / 1000000) + 'ms SLA' : '';
+
+        let contentHTML = '<div class="flex items-start justify-between">' +
+          '<div class="flex items-center gap-3">' +
+            '<div class="h-10 w-10 rounded-xl bg-cyan-950 border border-cyan-800 text-cyan-400 flex items-center justify-center font-bold text-sm shadow-inner">' + (idx + 1) + '</div>' +
+            '<div>' +
+              '<div class="flex items-center gap-2">' +
+                '<span class="text-xs uppercase font-mono tracking-wider font-semibold text-cyan-400">' + categoryTag + '</span>' +
+                (sla ? '<span class="text-[11px] font-mono text-slate-400 bg-slate-800 px-2 py-0.2 rounded">' + sla + '</span>' : '') +
+              '</div>' +
+              '<h4 class="text-base font-bold text-white mt-0.5">' + title + '</h4>' +
+            '</div>' +
+          '</div>' +
+          '<div class="text-right">' +
+            '<span class="text-xs font-mono text-slate-400 bg-slate-950 px-2.5 py-1 rounded border border-slate-800">' + step.activity + '</span>' +
+          '</div>' +
+        '</div>';
+
+        contentHTML += '<div class="mt-3.5 pt-3 border-t border-slate-800/80">';
+        if (isPM) {
+          contentHTML += '<p class="text-xs text-slate-300 leading-relaxed font-normal">' + (meta.summary || 'Executes workflow activity.') + '</p>';
+          if (step.compensating_action) {
+            contentHTML += '<div class="mt-2.5 flex items-center gap-2 bg-purple-950/40 border border-purple-800/60 rounded-lg p-2 text-xs text-purple-200">' +
+              '<span class="text-purple-400 font-bold">🛡️ Saga Protection:</span>' +
+              '<span>If downstream fails &rarr; executes <code class="font-mono text-purple-300 font-semibold">' + step.compensating_action + '</code></span>' +
+            '</div>';
+          }
+        } else {
+          contentHTML += '<div class="grid grid-cols-3 gap-2 text-xs font-mono">' +
+            '<div class="bg-slate-950 p-2 rounded border border-slate-800/80">' +
+              '<span class="text-slate-500 block text-[10px] uppercase">Retries</span>' +
+              '<span class="text-slate-200 font-semibold">' + (step.retries || 0) + ' attempts</span>' +
+            '</div>' +
+            '<div class="bg-slate-950 p-2 rounded border border-slate-800/80">' +
+              '<span class="text-slate-500 block text-[10px] uppercase">Timeout</span>' +
+              '<span class="text-slate-200 font-semibold">' + (step.timeout ? (step.timeout / 1000000000) + 's' : '30s') + '</span>' +
+            '</div>' +
+            '<div class="bg-slate-950 p-2 rounded border border-slate-800/80">' +
+              '<span class="text-slate-500 block text-[10px] uppercase">Rollback Action</span>' +
+              '<span class="text-purple-300 font-semibold truncate block">' + (step.compensating_action || 'None') + '</span>' +
+            '</div>' +
+          '</div>';
+        }
+        contentHTML += '</div>';
+
+        card.innerHTML = contentHTML;
+        container.appendChild(card);
+
+        if (idx < steps.length - 1) {
+          const connector = document.createElement('div');
+          connector.className = 'flex items-center justify-center gap-8 py-1 my-[-4px] relative';
+          connector.innerHTML = '<div class="flex flex-col items-center">' +
+            '<div class="w-0.5 h-6 bg-cyan-500/80"></div>' +
+            '<svg class="w-3.5 h-3.5 text-cyan-400 mt-[-2px]" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clip-rule="evenodd"/></svg>' +
+          '</div>' +
+          (step.compensating_action ? (
+            '<div class="flex items-center gap-1.5 text-[11px] font-mono text-purple-400 bg-purple-950/60 border border-purple-800/80 px-2 py-0.5 rounded-full shadow-sm">' +
+              '<span>↩️</span><span>Reverse LIFO Unwind on Failure</span>' +
+            '</div>'
+          ) : '');
+          container.appendChild(connector);
+        }
+      });
+    }
+
+    function renderParallelBlueprintDAG(bp, container) {
+      const isPM = STATE.activePersona === 'product_manager';
+      container.innerHTML = `
+        <div class="w-full max-w-xl bg-slate-900 border ${STATE.selectedStepName === 'verify-identity' ? 'border-cyan-500 ring-1 ring-cyan-500' : 'border-slate-800'} rounded-xl p-4 cursor-pointer hover:border-slate-700 transition" onclick="selectStep('verify-identity')">
+          <div class="flex items-center justify-between">
+            <div class="flex items-center gap-2.5">
+              <span class="w-7 h-7 rounded-lg bg-cyan-950 text-cyan-400 flex items-center justify-center font-bold text-xs">1</span>
+              <div>
+                <div class="text-[11px] font-mono text-cyan-400 uppercase font-semibold">Identity Verification</div>
+                <h4 class="text-sm font-bold text-white">Verify Applicant Identity (KYC)</h4>
+              </div>
+            </div>
+            <span class="text-xs font-mono text-slate-400 bg-slate-950 px-2 py-0.5 rounded">verify-identity</span>
+          </div>
+        </div>
+
+        <div class="text-xs font-mono text-cyan-400 flex items-center gap-2 my-[-2px]">
+          <div class="w-px h-6 bg-cyan-500"></div>
+          <span class="bg-cyan-950 border border-cyan-800 px-2 py-0.5 rounded-full text-[10px] uppercase tracking-wider">Parallel Fork</span>
+        </div>
+
+        <div class="grid grid-cols-2 gap-4 w-full max-w-2xl">
+          <div class="bg-slate-900 border ${STATE.selectedStepName === 'credit-bureau-check' ? 'border-cyan-500 ring-1 ring-cyan-500' : 'border-slate-800'} rounded-xl p-4 cursor-pointer hover:border-slate-700 transition" onclick="selectStep('credit-bureau-check')">
+            <div class="text-[11px] font-mono text-cyan-400 uppercase font-semibold">Credit Bureau</div>
+            <h4 class="text-sm font-bold text-white mt-1">Credit Bureau Pull (Experian)</h4>
+            <p class="text-xs text-slate-400 mt-2">${isPM ? 'Concurrent pull of credit score and debt obligations.' : 'Async Activity. Retries: 2'}</p>
+          </div>
+          <div class="bg-slate-900 border ${STATE.selectedStepName === 'aml-sanctions-screen' ? 'border-cyan-500 ring-1 ring-cyan-500' : 'border-slate-800'} rounded-xl p-4 cursor-pointer hover:border-slate-700 transition" onclick="selectStep('aml-sanctions-screen')">
+            <div class="text-[11px] font-mono text-cyan-400 uppercase font-semibold">Compliance</div>
+            <h4 class="text-sm font-bold text-white mt-1">AML &amp; OFAC Sanctions Screen</h4>
+            <p class="text-xs text-slate-400 mt-2">${isPM ? 'Concurrent screen against sanctions and PEP lists.' : 'Async Activity. Retries: 2'}</p>
+          </div>
+        </div>
+
+        <div class="text-xs font-mono text-cyan-400 flex items-center gap-2 my-[-2px]">
+          <span class="bg-cyan-950 border border-cyan-800 px-2 py-0.5 rounded-full text-[10px] uppercase tracking-wider">Join Barrier</span>
+          <div class="w-px h-6 bg-cyan-500"></div>
+        </div>
+
+        <div class="w-full max-w-xl bg-slate-900 border ${STATE.selectedStepName === 'calculate-risk-score' ? 'border-cyan-500 ring-1 ring-cyan-500' : 'border-slate-800'} rounded-xl p-4 cursor-pointer hover:border-slate-700 transition" onclick="selectStep('calculate-risk-score')">
+          <div class="flex items-center justify-between">
+            <div class="flex items-center gap-2.5">
+              <span class="w-7 h-7 rounded-lg bg-cyan-950 text-cyan-400 flex items-center justify-center font-bold text-xs">4</span>
+              <div>
+                <div class="text-[11px] font-mono text-cyan-400 uppercase font-semibold">Decision Engine</div>
+                <h4 class="text-sm font-bold text-white">Consolidated Risk Scoring (Join)</h4>
+              </div>
+            </div>
+            <span class="text-xs font-mono text-slate-400 bg-slate-950 px-2 py-0.5 rounded">calculate-risk-score</span>
+          </div>
+        </div>
+
+        <div class="w-0.5 h-6 bg-cyan-500/80 my-[-2px]"></div>
+
+        <div class="w-full max-w-xl bg-slate-900 border ${STATE.selectedStepName === 'underwriter-approval' ? 'border-amber-500 ring-1 ring-amber-500' : 'border-slate-800'} rounded-xl p-4 cursor-pointer hover:border-slate-700 transition" onclick="selectStep('underwriter-approval')">
+          <div class="flex items-center justify-between">
+            <div class="flex items-center gap-2.5">
+              <span class="w-7 h-7 rounded-lg bg-amber-950 text-amber-400 flex items-center justify-center font-bold text-xs">5</span>
+              <div>
+                <div class="text-[11px] font-mono text-amber-400 uppercase font-semibold">Human-in-the-Loop Gate</div>
+                <h4 class="text-sm font-bold text-white">Underwriter Officer Approval Gate</h4>
+              </div>
+            </div>
+            <span class="text-xs font-mono text-amber-400 bg-amber-950 px-2 py-0.5 rounded border border-amber-800">Workflow Signal</span>
+          </div>
+        </div>
+
+        <div class="w-0.5 h-6 bg-cyan-500/80 my-[-2px]"></div>
+
+        <div class="w-full max-w-xl bg-slate-900 border ${STATE.selectedStepName === 'disburse-funds' ? 'border-cyan-500 ring-1 ring-cyan-500' : 'border-slate-800'} rounded-xl p-4 cursor-pointer hover:border-slate-700 transition" onclick="selectStep('disburse-funds')">
+          <div class="flex items-center justify-between">
+            <div class="flex items-center gap-2.5">
+              <span class="w-7 h-7 rounded-lg bg-emerald-950 text-emerald-400 flex items-center justify-center font-bold text-xs">6</span>
+              <div>
+                <div class="text-[11px] font-mono text-emerald-400 uppercase font-semibold">Treasury Settlement</div>
+                <h4 class="text-sm font-bold text-white">ACH Funds Disbursement</h4>
+              </div>
+            </div>
+            <span class="text-xs font-mono text-slate-400 bg-slate-950 px-2 py-0.5 rounded">disburse-funds</span>
+          </div>
+        </div>
+      `;
+    }
+
+    function selectStep(stepName) {
+      STATE.selectedStepName = stepName;
+      renderBlueprint();
+    }
+
+    function inspectBlueprintStep(stepName) {
+      const bp = STATE.blueprints[STATE.selectedBpId];
+      if (!bp) return;
+      const step = bp.definition.steps.find(s => s.name === stepName) || bp.definition.steps[0];
+      if (!step) return;
+
+      const meta = bp.step_meta?.[step.name] || {};
+
+      document.getElementById('inspCategory').textContent = meta.category || 'Step Definition';
+      document.getElementById('inspTitle').textContent = meta.title || step.name;
+      document.getElementById('inspActivity').textContent = step.activity;
+      document.getElementById('inspPMSummary').textContent = meta.summary || 'Executes this activity during workflow execution.';
+      document.getElementById('inspSLA').textContent = meta.sla ? ('< ' + Math.round(meta.sla / 1000000) + ' ms') : 'N/A';
+      document.getElementById('inspCompAction').textContent = step.compensating_action || 'None (Irreversible)';
+      document.getElementById('inspRollbackNote').textContent = meta.rollback_note || 'No automatic compensation specified for this step.';
+
+      document.getElementById('inspRetries').textContent = (step.retries || 0) + ' attempts';
+      document.getElementById('inspTimeout').textContent = step.timeout ? (step.timeout / 1000000000) + 's' : '30s';
+      document.getElementById('inspEngNotes').textContent = meta.engineering_notes || 'Replicated via Raft state machine with sequential local read consistency.';
+
+      document.getElementById('inspInputJSON').textContent = JSON.stringify(meta.sample_input || { step: step.name }, null, 2);
+      document.getElementById('inspOutputJSON').textContent = JSON.stringify(meta.sample_output || { status: 'success' }, null, 2);
+    }
+
+    function renderRuntime() {
+      const inst = STATE.currentInstance;
+      if (!inst) {
+        document.getElementById('rtFlowID').textContent = 'No Active Flow';
+        document.getElementById('rtStatusBadge').textContent = 'IDLE';
+        document.getElementById('rtGraphContainer').innerHTML = '<div class="text-center py-12 text-slate-500"><p class="text-sm">No workflow run selected.</p></div>';
+        return;
+      }
+
+      document.getElementById('rtFlowID').textContent = inst.workflow_id;
+      document.getElementById('rtRunID').textContent = inst.run_id || 'run-1';
+
+      const statusBadge = document.getElementById('rtStatusBadge');
+      statusBadge.textContent = inst.status;
+
+      const iconBox = document.getElementById('rtIconBox');
+      const bannerTitle = document.getElementById('rtBannerTitle');
+      const bannerDesc = document.getElementById('rtBannerDesc');
+
+      switch (inst.status) {
+        case 'COMPLETED':
+          statusBadge.className = 'text-xs px-2.5 py-0.5 rounded-full font-bold uppercase tracking-wider bg-emerald-950 border border-emerald-700 text-emerald-300';
+          iconBox.className = 'h-10 w-10 rounded-lg bg-emerald-950 border border-emerald-700 text-emerald-400 flex items-center justify-center font-bold text-lg';
+          iconBox.textContent = '✓';
+          bannerTitle.textContent = 'Saga Executed Successfully';
+          bannerDesc.textContent = 'All steps committed deterministically with Raft Exactly-Once Semantics (EOS).';
+          break;
+        case 'RUNNING':
+          statusBadge.className = 'text-xs px-2.5 py-0.5 rounded-full font-bold uppercase tracking-wider bg-cyan-950 border border-cyan-700 text-cyan-300 animate-pulse';
+          iconBox.className = 'h-10 w-10 rounded-lg bg-cyan-950 border border-cyan-700 text-cyan-400 flex items-center justify-center font-bold text-lg';
+          iconBox.textContent = '⚡';
+          bannerTitle.textContent = 'Workflow Running...';
+          bannerDesc.textContent = 'Consensus engine is orchestrating downstream activities.';
+          break;
+        case 'COMPENSATING':
+          statusBadge.className = 'text-xs px-2.5 py-0.5 rounded-full font-bold uppercase tracking-wider bg-amber-950 border border-amber-700 text-amber-300 animate-pulse';
+          iconBox.className = 'h-10 w-10 rounded-lg bg-amber-950 border border-amber-700 text-amber-400 flex items-center justify-center font-bold text-lg';
+          iconBox.textContent = '↺';
+          bannerTitle.textContent = 'Automatic Saga Rollback in Progress';
+          bannerDesc.textContent = 'Failure detected! Reverse-order LIFO compensating transactions executing.';
+          break;
+        case 'COMPENSATED':
+          statusBadge.className = 'text-xs px-2.5 py-0.5 rounded-full font-bold uppercase tracking-wider bg-purple-950 border border-purple-700 text-purple-300';
+          iconBox.className = 'h-10 w-10 rounded-lg bg-purple-950 border border-purple-700 text-purple-400 flex items-center justify-center font-bold text-lg';
+          iconBox.textContent = '🛡️';
+          bannerTitle.textContent = 'Saga Rolled Back Safely (COMPENSATED)';
+          bannerDesc.textContent = 'All prior completed steps have been cleanly rolled back. Zero orphaned state left in system.';
+          break;
+        case 'FAILED':
+          statusBadge.className = 'text-xs px-2.5 py-0.5 rounded-full font-bold uppercase tracking-wider bg-rose-950 border border-rose-700 text-rose-300';
+          iconBox.className = 'h-10 w-10 rounded-lg bg-rose-950 border border-rose-700 text-rose-400 flex items-center justify-center font-bold text-lg';
+          iconBox.textContent = '✕';
+          bannerTitle.textContent = 'Workflow Failed';
+          bannerDesc.textContent = inst.error || 'A non-recoverable error halted the flow.';
+          break;
+        default:
+          statusBadge.className = 'text-xs px-2.5 py-0.5 rounded-full font-bold uppercase tracking-wider bg-slate-800 text-slate-300';
+      }
+
+      const approvalStep = inst.steps ? inst.steps['underwriter-approval'] : null;
+      const signalControls = document.getElementById('rtSignalControls');
+      if (approvalStep && approvalStep.status === 'RUNNING') {
+        signalControls.classList.remove('hidden');
+      } else {
+        signalControls.classList.add('hidden');
+      }
+
+      const container = document.getElementById('rtGraphContainer');
+      container.innerHTML = '';
+
+      const stepOrder = inst.step_order || Object.keys(inst.steps || {});
+      stepOrder.forEach((stepName, idx) => {
+        const step = inst.steps[stepName];
+        if (!step) return;
+
+        const isSelected = STATE.selectedStepName === step.name;
+        const node = document.createElement('div');
+
+        let statusClass = 'border-slate-800 bg-slate-900';
+        let badgeClass = 'bg-slate-800 text-slate-400';
+        let statusIcon = '⏳';
+
+        switch (step.status) {
+          case 'COMPLETED':
+            statusClass = 'border-emerald-600/80 bg-slate-900 shadow-md shadow-emerald-950/30';
+            badgeClass = 'bg-emerald-950 border border-emerald-700 text-emerald-300';
+            statusIcon = '✓';
+            break;
+          case 'RUNNING':
+            statusClass = 'node-running border-cyan-500 bg-slate-850';
+            badgeClass = 'bg-cyan-950 border border-cyan-700 text-cyan-300 animate-pulse';
+            statusIcon = '⚡';
+            break;
+          case 'FAILED':
+            statusClass = 'border-rose-600 bg-rose-950/20 shadow-md shadow-rose-950/50';
+            badgeClass = 'bg-rose-950 border border-rose-700 text-rose-300';
+            statusIcon = '✕';
+            break;
+          case 'COMPENSATING':
+            statusClass = 'node-compensating border-purple-500 bg-purple-950/20';
+            badgeClass = 'bg-purple-950 border border-purple-700 text-purple-300';
+            statusIcon = '↺';
+            break;
+          case 'COMPENSATED':
+            statusClass = 'border-purple-600/80 bg-purple-950/30 shadow-md shadow-purple-950/30';
+            badgeClass = 'bg-purple-950 border border-purple-700 text-purple-300';
+            statusIcon = '🛡️';
+            break;
+          default:
+            statusClass = 'border-slate-800 bg-slate-900 opacity-60';
+            badgeClass = 'bg-slate-800 text-slate-500';
+            statusIcon = '•';
+        }
+
+        if (isSelected) {
+          statusClass += ' ring-2 ring-cyan-400';
+        }
+
+        node.className = 'w-full max-w-2xl border rounded-2xl p-5 shadow-lg cursor-pointer transition-all duration-200 transform hover:scale-[1.01] ' + statusClass;
+        node.onclick = () => {
+          STATE.selectedStepName = step.name;
+          inspectRuntimeStep(step);
+          switchSideTab('step');
+          renderRuntime();
+        };
+
+        node.innerHTML = '<div class="flex items-start justify-between">' +
+          '<div class="flex items-center gap-3">' +
+            '<div class="h-9 w-9 rounded-xl flex items-center justify-center font-bold text-sm bg-slate-950 border border-slate-800">' + statusIcon + '</div>' +
+            '<div>' +
+              '<div class="flex items-center gap-2">' +
+                '<h4 class="text-sm font-bold text-white">' + step.name + '</h4>' +
+                '<span class="text-[11px] font-mono font-bold px-2 py-0.5 rounded-full uppercase tracking-wider ' + badgeClass + '">' + step.status + '</span>' +
+              '</div>' +
+              '<div class="text-xs text-slate-400 font-mono mt-0.5">Activity: ' + step.activity + '</div>' +
+            '</div>' +
+          '</div>' +
+          '<div class="text-right text-xs font-mono text-slate-400">' +
+            '<div>Attempt: <span class="text-slate-200 font-semibold">' + (step.attempt || 1) + '/' + ((step.max_retries || 0) + 1) + '</span></div>' +
+            (step.error ? ('<div class="text-rose-400 font-semibold truncate max-w-[180px] mt-0.5">Error: ' + step.error + '</div>') : '') +
+          '</div>' +
+        '</div>';
+
+        container.appendChild(node);
+
+        if (idx < stepOrder.length - 1) {
+          const isCompensated = step.status === 'COMPENSATED';
+          const connector = document.createElement('div');
+          connector.className = 'flex items-center justify-center gap-4 py-0.5 relative';
+          connector.innerHTML = '<div class="flex flex-col items-center">' +
+            '<div class="w-0.5 h-6 ' + (isCompensated ? 'bg-purple-500/80 border-dashed' : 'bg-slate-700') + '"></div>' +
+            '<svg class="w-3.5 h-3.5 ' + (isCompensated ? 'text-purple-400' : 'text-slate-600') + ' mt-[-2px]" fill="currentColor" viewBox="0 0 20 20">' +
+              '<path fill-rule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clip-rule="evenodd"/>' +
+            '</svg>' +
+          '</div>';
+          container.appendChild(connector);
+        }
+      });
+
+      renderAuditTimeline(inst);
+
+      const stepToInspect = (inst.steps && inst.steps[STATE.selectedStepName]) || (inst.steps && inst.steps[stepOrder[0]]);
+      if (stepToInspect) {
+        inspectRuntimeStep(stepToInspect);
+      }
+    }
+
+    function renderAuditTimeline(inst) {
+      const timeline = document.getElementById('auditTimeline');
+      timeline.innerHTML = '';
+
+      const history = inst.history || [];
+      document.getElementById('auditCount').textContent = history.length;
+
+      if (history.length === 0) {
+        timeline.innerHTML = '<div class="text-xs text-slate-500 py-4 text-center">No history events recorded yet.</div>';
+        return;
+      }
+
+      history.forEach((ev) => {
+        const item = document.createElement('div');
+        item.className = 'p-2.5 bg-slate-950/70 border border-slate-800/80 rounded-lg text-xs space-y-1 font-mono transition hover:border-slate-700';
+
+        let typeBadge = 'text-cyan-400 bg-cyan-950/50';
+        if (ev.type.indexOf('COMPLET') !== -1) typeBadge = 'text-emerald-400 bg-emerald-950/50';
+        if (ev.type.indexOf('FAIL') !== -1) typeBadge = 'text-rose-400 bg-rose-950/50';
+        if (ev.type.indexOf('COMPENSAT') !== -1) typeBadge = 'text-purple-400 bg-purple-950/50';
+
+        const timeStr = ev.timestamp ? new Date(ev.timestamp).toLocaleTimeString() : '00:00:00';
+
+        item.innerHTML = '<div class="flex items-center justify-between text-[11px]">' +
+          '<span class="px-1.5 py-0.2 rounded font-bold ' + typeBadge + '">' + ev.type + '</span>' +
+          '<span class="text-slate-500">' + timeStr + '</span>' +
+        '</div>' +
+        '<div class="text-slate-300 font-sans text-xs">' + (ev.message || ev.type) + '</div>' +
+        (ev.step_name ? ('<div class="text-[11px] text-slate-400">Step: <span class="text-slate-200">' + ev.step_name + '</span></div>') : '');
+
+        timeline.appendChild(item);
+      });
+    }
+
+    function inspectRuntimeStep(step) {
+      document.getElementById('rtStepInspName').textContent = step.name;
+      document.getElementById('rtStepInspActivity').textContent = 'Activity: ' + step.activity;
+
+      const statusEl = document.getElementById('rtStepInspStatus');
+      statusEl.textContent = step.status;
+      statusEl.className = 'px-2 py-0.5 rounded font-mono font-bold uppercase text-xs ' + (
+        step.status === 'COMPLETED' ? 'text-emerald-400 bg-emerald-950 border border-emerald-800' :
+        step.status === 'COMPENSATED' ? 'text-purple-400 bg-purple-950 border border-purple-800' :
+        step.status === 'FAILED' ? 'text-rose-400 bg-rose-950 border border-rose-800' : 'text-cyan-400 bg-cyan-950 border border-cyan-800'
+      );
+
+      document.getElementById('rtStepInspAttempt').textContent = (step.attempt || 1) + ' of ' + ((step.max_retries || 0) + 1);
+      document.getElementById('rtStepInspDuration').textContent = '145 ms';
+
+      const wfId = STATE.currentInstance ? STATE.currentInstance.workflow_id : 'node-1-wf';
+      document.getElementById('rtStepInspKey').textContent = wfId + ':1:4:' + (step.attempt || 1);
+
+      const errorBox = document.getElementById('rtStepInspErrorBox');
+      if (step.error) {
+        errorBox.classList.remove('hidden');
+        document.getElementById('rtStepInspError').textContent = step.error;
+      } else {
+        errorBox.classList.add('hidden');
+      }
+
+      document.getElementById('rtStepInspInput').textContent = JSON.stringify(step.input || {}, null, 2);
+      document.getElementById('rtStepInspOutput').textContent = JSON.stringify(step.output || (step.status === 'COMPLETED' ? { status: 'ok' } : null), null, 2);
+    }
+
+    async function launchScenario(scenario) {
+      if (STATE.isLiveConnected) {
+        try {
+          const bp = STATE.blueprints[STATE.selectedBpId];
+          const wfID = (scenario.input && (scenario.input.order_id || scenario.input.application_id)) || ('FLOW-' + Math.floor(Math.random() * 9000 + 1000));
+          const res = await fetch('/api/v1/workflows/start', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              workflow_id: wfID,
+              definition: bp.definition,
+              input: scenario.input
+            })
+          });
+          if (res.ok) {
+            const wf = await res.json();
+            STATE.currentInstance = wf;
+            STATE.liveInstances.unshift(wf);
+            updateRunSelectDropdown();
+            switchView('runtime');
+            return;
+          }
+        } catch (e) {
+          console.warn('Live API start failed, using simulator', e);
+        }
+      }
+
+      simulateFlowRun(scenario);
+    }
+
+    function simulateFlowRun(scenario) {
+      const bp = STATE.blueprints[STATE.selectedBpId];
+      const wfID = (scenario.input && (scenario.input.order_id || scenario.input.application_id)) || ('SIM-' + Math.floor(Math.random() * 9000 + 1000));
+      const runID = 'run-' + Date.now();
+
+      const inst = {
+        workflow_id: wfID,
+        run_id: runID,
+        definition_name: bp.name,
+        definition: bp.definition,
+        status: 'RUNNING',
+        input: scenario.input,
+        steps: {},
+        step_order: bp.definition.steps.map(s => s.name),
+        history: [],
+        created_at: new Date().toISOString()
+      };
+
+      bp.definition.steps.forEach(s => {
+        inst.steps[s.name] = {
+          name: s.name,
+          activity: s.activity,
+          status: 'PENDING',
+          input: scenario.input,
+          max_retries: s.retries || 0,
+          attempt: 1,
+          compensating_action: s.compensating_action
+        };
+      });
+
+      inst.history.push({
+        id: 'evt-1',
+        type: 'WORKFLOW_STARTED',
+        timestamp: new Date().toISOString(),
+        message: 'Workflow started by user'
+      });
+
+      STATE.currentInstance = inst;
+      STATE.liveInstances.unshift(inst);
+      updateRunSelectDropdown();
+      switchView('runtime');
+
+      let currentIdx = 0;
+      const steps = bp.definition.steps;
+
+      function advance() {
+        if (currentIdx >= steps.length) {
+          inst.status = 'COMPLETED';
+          inst.history.push({
+            id: 'evt-' + (inst.history.length + 1),
+            type: 'WORKFLOW_COMPLETED',
+            timestamp: new Date().toISOString(),
+            message: 'All steps completed with Raft Exactly-Once Semantics (EOS)!'
+          });
+          renderRuntime();
+          return;
+        }
+
+        const stepDef = steps[currentIdx];
+        const step = inst.steps[stepDef.name];
+        step.status = 'RUNNING';
+
+        inst.history.push({
+          id: 'evt-' + (inst.history.length + 1),
+          type: 'STEP_STARTED',
+          step_name: step.name,
+          timestamp: new Date().toISOString(),
+          message: 'Dispatched step ' + step.name
+        });
+        renderRuntime();
+
+        setTimeout(() => {
+          if (scenario.mode === 'failure' && scenario.fail_step === stepDef.name) {
+            step.status = 'FAILED';
+            step.error = scenario.fail_reason || 'Step execution simulated failure';
+            inst.status = 'COMPENSATING';
+
+            inst.history.push({
+              id: 'evt-' + (inst.history.length + 1),
+              type: 'STEP_FAILED',
+              step_name: step.name,
+              timestamp: new Date().toISOString(),
+              message: 'Step ' + step.name + ' failed: ' + step.error
+            });
+            inst.history.push({
+              id: 'evt-' + (inst.history.length + 1),
+              type: 'COMPENSATION_TRIGGERED',
+              timestamp: new Date().toISOString(),
+              message: 'Triggering automatic reverse-order LIFO compensation'
+            });
+            renderRuntime();
+
+            setTimeout(() => {
+              rollback(currentIdx - 1);
+            }, 500);
+            return;
+          }
+
+          step.status = 'COMPLETED';
+          step.output = { status: 'success', timestamp: Date.now() };
+
+          inst.history.push({
+            id: 'evt-' + (inst.history.length + 1),
+            type: 'STEP_COMPLETED',
+            step_name: step.name,
+            timestamp: new Date().toISOString(),
+            message: 'Step ' + step.name + ' completed successfully'
+          });
+          renderRuntime();
+
+          currentIdx++;
+          setTimeout(advance, 450);
+        }, 600);
+      }
+
+      function rollback(idx) {
+        if (idx < 0) {
+          inst.status = 'COMPENSATED';
+          inst.history.push({
+            id: 'evt-' + (inst.history.length + 1),
+            type: 'WORKFLOW_COMPENSATED',
+            timestamp: new Date().toISOString(),
+            message: 'All completed steps successfully compensated in reverse order. Safe clean state restored.'
+          });
+          renderRuntime();
+          return;
+        }
+
+        const stepDef = steps[idx];
+        const step = inst.steps[stepDef.name];
+        if (step.status === 'COMPLETED' && stepDef.compensating_action) {
+          step.status = 'COMPENSATING';
+          inst.history.push({
+            id: 'evt-' + (inst.history.length + 1),
+            type: 'COMPENSATION_DISPATCHED',
+            step_name: step.name,
+            timestamp: new Date().toISOString(),
+            message: 'Compensating ' + step.name + ' with action: ' + stepDef.compensating_action
+          });
+          renderRuntime();
+
+          setTimeout(() => {
+            step.status = 'COMPENSATED';
+            inst.history.push({
+              id: 'evt-' + (inst.history.length + 1),
+              type: 'STEP_COMPENSATED',
+              step_name: step.name,
+              timestamp: new Date().toISOString(),
+              message: 'Compensated ' + step.name
+            });
+            renderRuntime();
+            setTimeout(() => rollback(idx - 1), 400);
+          }, 600);
+        } else {
+          rollback(idx - 1);
+        }
+      }
+
+      advance();
+    }
+
+    function seedSimulatedInstance() {
+      const bp = STATE.blueprints['order-fulfillment-saga'] || BUILTIN_BLUEPRINTS['order-fulfillment-saga'];
+      if (!bp) return;
+
+      const instCompleted = {
+        workflow_id: 'ORD-7821',
+        run_id: 'run-179120354',
+        definition_name: bp.name,
+        definition: bp.definition,
+        status: 'COMPLETED',
+        input: { order_id: 'ORD-7821', total_amount: 1999.00 },
+        steps: {
+          'reserve-inventory': { name: 'reserve-inventory', activity: 'reserve-inventory', status: 'COMPLETED', attempt: 1, max_retries: 2, compensating_action: 'release-inventory', input: { sku: 'SKU-MACBOOK-M4', qty: 1 }, output: { reserved: true, reservation_id: 'RES-55109' } },
+          'charge-payment': { name: 'charge-payment', activity: 'charge-payment', status: 'COMPLETED', attempt: 1, max_retries: 1, compensating_action: 'refund-payment', input: { amount: 1999.00 }, output: { charged: true, txn_id: 'TXN-8871629' } },
+          'fraud-risk-score': { name: 'fraud-risk-score', activity: 'fraud-risk-score', status: 'COMPLETED', attempt: 1, max_retries: 2, compensating_action: 'flag-for-manual-review', input: { risk_score: 14 }, output: { decision: 'PASS' } },
+          'dispatch-shipment': { name: 'dispatch-shipment', activity: 'dispatch-shipment', status: 'COMPLETED', attempt: 1, max_retries: 2, compensating_action: 'cancel-shipment', input: { carrier: 'FedEx' }, output: { tracking_number: 'TRK-FEDEX-9904128' } }
+        },
+        step_order: ['reserve-inventory', 'charge-payment', 'fraud-risk-score', 'dispatch-shipment'],
+        history: [
+          { id: 'evt-1', type: 'WORKFLOW_STARTED', timestamp: new Date(Date.now() - 5000).toISOString(), message: 'Workflow initiated via Raft consensus' },
+          { id: 'evt-2', type: 'STEP_COMPLETED', step_name: 'reserve-inventory', timestamp: new Date(Date.now() - 4000).toISOString(), message: 'Inventory locked in WH-WEST-1' },
+          { id: 'evt-3', type: 'STEP_COMPLETED', step_name: 'charge-payment', timestamp: new Date(Date.now() - 3000).toISOString(), message: 'Captured $1,999.00 via Stripe' },
+          { id: 'evt-4', type: 'STEP_COMPLETED', step_name: 'fraud-risk-score', timestamp: new Date(Date.now() - 2000).toISOString(), message: 'Fraud risk scored 14 (PASS)' },
+          { id: 'evt-5', type: 'STEP_COMPLETED', step_name: 'dispatch-shipment', timestamp: new Date(Date.now() - 1000).toISOString(), message: 'FedEx Tracking TRK-FEDEX-9904128 generated' },
+          { id: 'evt-6', type: 'WORKFLOW_COMPLETED', timestamp: new Date().toISOString(), message: 'Saga completed successfully with Exactly-Once Semantics' }
+        ]
+      };
+
+      const instCompensated = {
+        workflow_id: 'ORD-7822-FAIL',
+        run_id: 'run-179120399',
+        definition_name: bp.name,
+        definition: bp.definition,
+        status: 'COMPENSATED',
+        input: { order_id: 'ORD-7822-FAIL', total_amount: 4500.00, simulate_fail: 'charge-payment' },
+        steps: {
+          'reserve-inventory': { name: 'reserve-inventory', activity: 'reserve-inventory', status: 'COMPENSATED', attempt: 1, max_retries: 2, compensating_action: 'release-inventory', input: { sku: 'SKU-MACBOOK-M4', qty: 1 }, output: { released: true, restored_stock: 500 } },
+          'charge-payment': { name: 'charge-payment', activity: 'charge-payment', status: 'FAILED', attempt: 2, max_retries: 1, error: 'card_declined: insufficient funds on account', compensating_action: 'refund-payment', input: { amount: 4500.00 } },
+          'fraud-risk-score': { name: 'fraud-risk-score', activity: 'fraud-risk-score', status: 'PENDING', attempt: 0, max_retries: 2, compensating_action: 'flag-for-manual-review' },
+          'dispatch-shipment': { name: 'dispatch-shipment', activity: 'dispatch-shipment', status: 'PENDING', attempt: 0, max_retries: 2, compensating_action: 'cancel-shipment' }
+        },
+        step_order: ['reserve-inventory', 'charge-payment', 'fraud-risk-score', 'dispatch-shipment'],
+        history: [
+          { id: 'evt-1', type: 'WORKFLOW_STARTED', timestamp: new Date(Date.now() - 5000).toISOString(), message: 'Workflow initiated via Raft consensus' },
+          { id: 'evt-2', type: 'STEP_COMPLETED', step_name: 'reserve-inventory', timestamp: new Date(Date.now() - 4000).toISOString(), message: 'Inventory locked in WH-WEST-1' },
+          { id: 'evt-3', type: 'STEP_FAILED', step_name: 'charge-payment', timestamp: new Date(Date.now() - 3000).toISOString(), message: 'Payment authorization declined: insufficient funds' },
+          { id: 'evt-4', type: 'COMPENSATION_TRIGGERED', timestamp: new Date(Date.now() - 2500).toISOString(), message: 'Triggered automatic LIFO saga rollback' },
+          { id: 'evt-5', type: 'COMPENSATION_DISPATCHED', step_name: 'reserve-inventory', timestamp: new Date(Date.now() - 2000).toISOString(), message: 'Executing compensating action: release-inventory' },
+          { id: 'evt-6', type: 'STEP_COMPENSATED', step_name: 'reserve-inventory', timestamp: new Date(Date.now() - 1000).toISOString(), message: 'Compensated reserve-inventory: stock restored' },
+          { id: 'evt-7', type: 'WORKFLOW_COMPENSATED', timestamp: new Date().toISOString(), message: 'Saga rolled back safely: zero orphaned state' }
+        ]
+      };
+
+      STATE.liveInstances = [instCompleted, instCompensated];
+      STATE.currentInstance = instCompleted;
+      updateRunSelectDropdown();
+    }
+
+    function updateRunSelectDropdown() {
+      const select = document.getElementById('rtRunSelect');
+      select.innerHTML = '';
+      STATE.liveInstances.forEach(inst => {
+        const opt = document.createElement('option');
+        opt.value = inst.workflow_id;
+        opt.textContent = inst.workflow_id + ' [' + inst.status + ']';
+        if (STATE.currentInstance && STATE.currentInstance.workflow_id === inst.workflow_id) {
+          opt.selected = true;
+        }
+        select.appendChild(opt);
+      });
+    }
+
+    function openRunModal() {
+      const bp = STATE.blueprints[STATE.selectedBpId];
+      if (!bp) return;
+
+      const grid = document.getElementById('modalScenarioGrid');
+      grid.innerHTML = '';
+
+      (bp.scenarios || []).forEach(sc => {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'p-2.5 rounded-lg border border-slate-800 bg-slate-950 text-left hover:border-cyan-500 transition text-xs';
+        btn.innerHTML = '<div class="font-bold text-white">' + sc.name + '</div><div class="text-[11px] text-slate-400 mt-1 line-clamp-1">' + sc.description + '</div>';
+        btn.onclick = () => {
+          document.getElementById('modalInputJSON').value = JSON.stringify(sc.input, null, 2);
+        };
+        grid.appendChild(btn);
+      });
+
+      document.getElementById('modalWfID').value = 'FLOW-' + Math.floor(Math.random() * 9000 + 1000);
+      document.getElementById('modalInputJSON').value = JSON.stringify(bp.default_input || bp.scenarios?.[0]?.input || {}, null, 2);
+      document.getElementById('runModal').classList.remove('hidden');
+    }
+
+    function closeRunModal() {
+      document.getElementById('runModal').classList.add('hidden');
+    }
+
+    function executeModalRun() {
+      const wfID = document.getElementById('modalWfID').value.trim();
+      let input = {};
+      try {
+        input = JSON.parse(document.getElementById('modalInputJSON').value);
+      } catch (e) {
+        alert('Invalid JSON input: ' + e.message);
+        return;
+      }
+      closeRunModal();
+      launchScenario({
+        id: 'custom',
+        name: 'Custom Flow Run',
+        mode: input.simulate_fail ? 'failure' : 'success',
+        fail_step: input.simulate_fail,
+        fail_reason: input.fail_reason,
+        input: { ...input, order_id: wfID }
+      });
+    }
+
+    async function sendSignal(signalName) {
+      if (!STATE.currentInstance) return;
+      const wfID = STATE.currentInstance.workflow_id;
+      if (STATE.isLiveConnected) {
+        await fetch('/api/v1/workflows/' + encodeURIComponent(wfID) + '/signal', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ signal_name: signalName, payload: { reviewer: 'Alice' } })
+        });
+      } else {
+        const step = STATE.currentInstance.steps ? STATE.currentInstance.steps['underwriter-approval'] : null;
+        if (step) {
+          step.status = signalName === 'approve' ? 'COMPLETED' : 'FAILED';
+          if (signalName === 'reject') step.error = 'Rejected by loan officer';
+          STATE.currentInstance.history.push({
+            id: 'evt-' + Date.now(),
+            type: 'WORKFLOW_SIGNALED',
+            timestamp: new Date().toISOString(),
+            message: 'Signal received: ' + signalName
+          });
+          renderRuntime();
+        }
+      }
+    }
+  </script>
+</body>
+</html>

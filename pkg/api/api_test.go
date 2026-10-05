@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"net/http"
 	"testing"
 	"time"
 
@@ -108,3 +109,59 @@ func TestHTTPAPIAndSDK(t *testing.T) {
 		t.Fatalf("CancelWorkflow failed: %v", err)
 	}
 }
+
+func TestVisualizerAndBlueprintsEndpoints(t *testing.T) {
+	reg := worker.NewRegistry()
+	coord, err := graphflow.NewEmbeddedCoordinator(reg)
+	if err != nil {
+		t.Fatalf("NewEmbeddedCoordinator failed: %v", err)
+	}
+	defer coord.Close()
+
+	srv := NewServer("127.0.0.1:0", coord, "node-test-viz")
+	if err := srv.Start(); err != nil {
+		t.Fatalf("Start server failed: %v", err)
+	}
+	defer srv.Close()
+
+	baseURL := "http://" + srv.Addr()
+
+	// 1. Test UI endpoint at /
+	resp, err := http.Get(baseURL + "/")
+	if err != nil {
+		t.Fatalf("GET / failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 OK from /, got %d", resp.StatusCode)
+	}
+
+	// 2. Test UI endpoint at /ui
+	respUI, err := http.Get(baseURL + "/ui")
+	if err != nil {
+		t.Fatalf("GET /ui failed: %v", err)
+	}
+	defer respUI.Body.Close()
+	if respUI.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 OK from /ui, got %d", respUI.StatusCode)
+	}
+
+	// 3. Test Blueprints list endpoint
+	respBps, err := http.Get(baseURL + "/api/v1/blueprints")
+	if err != nil {
+		t.Fatalf("GET /api/v1/blueprints failed: %v", err)
+	}
+	defer respBps.Body.Close()
+	if respBps.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 OK from /api/v1/blueprints, got %d", respBps.StatusCode)
+	}
+
+	var bps []map[string]any
+	if err := json.NewDecoder(respBps.Body).Decode(&bps); err != nil {
+		t.Fatalf("decode blueprints failed: %v", err)
+	}
+	if len(bps) < 2 {
+		t.Fatalf("expected at least 2 blueprints, got %d", len(bps))
+	}
+}
+
