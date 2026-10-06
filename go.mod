@@ -2,8 +2,6 @@ module github.com/avivklas/plexus-flow
 
 go 1.27.0
 
-replace github.com/avivklas/plexus => ../plexus
-
 require (
 	github.com/avivklas/plexus v0.2.0 // indirect
 	github.com/fatih/color v1.13.0 // indirect
