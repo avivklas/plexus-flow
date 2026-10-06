@@ -5,8 +5,8 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/avivklas/plexus/pkg/store"
 	"github.com/avivklas/plexus-flow/pkg/flow"
+	"github.com/avivklas/plexus/pkg/store"
 )
 
 func TestFlowStoreLifecycle(t *testing.T) {

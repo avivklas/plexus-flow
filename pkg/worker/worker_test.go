@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/avivklas/plexus/pkg/store"
 	"github.com/avivklas/plexus-flow/pkg/flowstore"
+	"github.com/avivklas/plexus/pkg/store"
 )
 
 type mockApplier struct {

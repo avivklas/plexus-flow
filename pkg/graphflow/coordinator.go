@@ -5,16 +5,17 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"sort"
 	"sync"
 	"time"
 
+	"github.com/avivklas/plexus-flow/pkg/flow"
+	"github.com/avivklas/plexus-flow/pkg/flowstore"
+	"github.com/avivklas/plexus-flow/pkg/worker"
 	"github.com/avivklas/plexus/pkg/dedup"
 	"github.com/avivklas/plexus/pkg/graph"
 	"github.com/avivklas/plexus/pkg/machine"
 	"github.com/avivklas/plexus/pkg/store"
-	"github.com/avivklas/plexus-flow/pkg/flow"
-	"github.com/avivklas/plexus-flow/pkg/flowstore"
-	"github.com/avivklas/plexus-flow/pkg/worker"
 	"github.com/hashicorp/raft"
 )
 
@@ -42,6 +43,9 @@ type Coordinator struct {
 	edge          *graph.Edge
 	ownsMachines  bool
 	cleanupFns    []func()
+
+	flowsMu sync.RWMutex
+	flows   map[string]flow.WorkflowDefinition
 }
 
 // NewCoordinator creates a new Raft Graph coordinator with the provided machines and stores.
@@ -96,6 +100,7 @@ func NewCoordinator(cfg Config) (*Coordinator, error) {
 		dedupStore:    cfg.DedupStore,
 		executor:      executor,
 		registry:      cfg.Registry,
+		flows:         make(map[string]flow.WorkflowDefinition),
 	}
 
 	// Connect Upstream -> Downstream via Raft Graph Pipe
@@ -193,8 +198,41 @@ func (c *Coordinator) transformWorkflowEvent(ctx context.Context, cmd *store.Com
 	return downstreamCmds, nil
 }
 
+// RegisterFlow declares a flow so it is visible through the flows API even
+// before any run has started. Starting a workflow registers its flow as well.
+func (c *Coordinator) RegisterFlow(def flow.WorkflowDefinition) error {
+	if err := def.Validate(); err != nil {
+		return fmt.Errorf("invalid flow definition: %w", err)
+	}
+	c.flowsMu.Lock()
+	c.flows[def.Name] = def.Normalized()
+	c.flowsMu.Unlock()
+	return nil
+}
+
+// Flows returns all known flow definitions sorted by name.
+func (c *Coordinator) Flows() []flow.WorkflowDefinition {
+	c.flowsMu.RLock()
+	defer c.flowsMu.RUnlock()
+	out := make([]flow.WorkflowDefinition, 0, len(c.flows))
+	for _, d := range c.flows {
+		out = append(out, d)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out
+}
+
+// Flow returns a known flow definition by name.
+func (c *Coordinator) Flow(name string) (flow.WorkflowDefinition, bool) {
+	c.flowsMu.RLock()
+	defer c.flowsMu.RUnlock()
+	d, ok := c.flows[name]
+	return d, ok
+}
+
 // StartWorkflow initiates a workflow via upstream Raft machine consensus.
 func (c *Coordinator) StartWorkflow(ctx context.Context, req flowstore.StartWorkflowRequest) (*flow.WorkflowInstance, error) {
+	_ = c.RegisterFlow(req.Definition) // invalid definitions are rejected by the store below
 	res, err := c.cfg.Upstream.Apply(ctx, flowstore.CmdStartWorkflow, req)
 	if err != nil {
 		return nil, err

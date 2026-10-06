@@ -3,23 +3,23 @@ package flowstore
 import (
 	"encoding/json"
 
-	"github.com/avivklas/plexus/pkg/store"
 	"github.com/avivklas/plexus-flow/pkg/flow"
+	"github.com/avivklas/plexus/pkg/store"
 )
 
 // Flow Store Command Types
 const (
-	CmdStartWorkflow             store.CommandType = "flow.workflow.start"
-	CmdDispatchStep              store.CommandType = "flow.step.dispatch"
-	CmdCompleteStep              store.CommandType = "flow.step.complete"
-	CmdFailStep                  store.CommandType = "flow.step.fail"
-	CmdTriggerCompensation       store.CommandType = "flow.workflow.compensate"
-	CmdStartCompensationStep     store.CommandType = "flow.step.compensation.start"
-	CmdCompleteCompensationStep  store.CommandType = "flow.step.compensation.complete"
-	CmdFailCompensationStep      store.CommandType = "flow.step.compensation.fail"
-	CmdCompleteWorkflow          store.CommandType = "flow.workflow.complete"
-	CmdCancelWorkflow            store.CommandType = "flow.workflow.cancel"
-	CmdSignalWorkflow            store.CommandType = "flow.workflow.signal"
+	CmdStartWorkflow            store.CommandType = "flow.workflow.start"
+	CmdDispatchStep             store.CommandType = "flow.step.dispatch"
+	CmdCompleteStep             store.CommandType = "flow.step.complete"
+	CmdFailStep                 store.CommandType = "flow.step.fail"
+	CmdTriggerCompensation      store.CommandType = "flow.workflow.compensate"
+	CmdStartCompensationStep    store.CommandType = "flow.step.compensation.start"
+	CmdCompleteCompensationStep store.CommandType = "flow.step.compensation.complete"
+	CmdFailCompensationStep     store.CommandType = "flow.step.compensation.fail"
+	CmdCompleteWorkflow         store.CommandType = "flow.workflow.complete"
+	CmdCancelWorkflow           store.CommandType = "flow.workflow.cancel"
+	CmdSignalWorkflow           store.CommandType = "flow.workflow.signal"
 )
 
 // StartWorkflowRequest initiates a new workflow execution.

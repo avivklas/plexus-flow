@@ -1,0 +1,336 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>plexus-flow</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --panel: #fff; --line: #e3e6eb; --text: #1b2330; --muted: #7a8494;
+    --edge: #8a93a3; --ok: #2f9e62; --ok-bg: #e4f5ec; --bad: #d1383d; --bad-bg: #fde8e8;
+    --comp: #c98a14; --comp-bg: #fbefd0; --run: #2f6fdb; --run-bg: #e3edfd;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body { font: 14px/1.4 -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", sans-serif; color: var(--text); background: var(--bg); display: flex; flex-direction: column; }
+  header { display: flex; align-items: center; gap: 16px; padding: 10px 18px; background: var(--panel); border-bottom: 1px solid var(--line); }
+  .logo { font-weight: 650; letter-spacing: -.01em; }
+  .logo b { color: var(--run); }
+  select { font: inherit; padding: 6px 10px; border: 1px solid var(--line); border-radius: 8px; background: #fff; min-width: 220px; }
+  .toggle { display: inline-flex; background: #eceff3; border-radius: 9px; padding: 3px; margin: 0 auto; }
+  .toggle button { font: inherit; border: 0; background: transparent; padding: 5px 18px; border-radius: 7px; cursor: pointer; color: var(--muted); }
+  .toggle button.on { background: #fff; color: var(--text); box-shadow: 0 1px 2px rgba(0,0,0,.12); }
+  main { flex: 1; display: flex; min-height: 0; }
+  #traces { width: 290px; background: var(--panel); border-right: 1px solid var(--line); display: none; flex-direction: column; }
+  body.traces #traces { display: flex; }
+  #filters { display: flex; gap: 6px; padding: 10px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+  #filters button { font: inherit; font-size: 12px; border: 1px solid var(--line); background: #fff; border-radius: 99px; padding: 2px 10px; cursor: pointer; color: var(--muted); }
+  #filters button.on { background: var(--text); color: #fff; border-color: var(--text); }
+  #tracelist { overflow: auto; flex: 1; }
+  .row { display: flex; align-items: center; gap: 8px; padding: 10px 14px; border-bottom: 1px solid var(--line); cursor: pointer; border-left: 3px solid transparent; }
+  .row:hover { background: #f6f8fb; }
+  .row.sel { background: #e8f1fe; border-left-color: var(--run); }
+  .row .id { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .row .dur { color: var(--muted); font-variant-numeric: tabular-nums; }
+  .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); flex: none; }
+  .dot.COMPLETED { background: var(--ok); } .dot.COMPENSATED, .dot.COMPENSATING { background: var(--comp); }
+  .dot.FAILED { background: var(--bad); } .dot.RUNNING { background: var(--run); }
+  .empty { color: var(--muted); padding: 18px; }
+  #stage { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+  #canvas { flex: 1; overflow: auto; position: relative; background-image: radial-gradient(#d8dce3 1px, transparent 1px); background-size: 18px 18px; }
+  #canvas svg { display: block; margin: 0 auto; max-width: 100%; height: auto; }
+  #legend { position: absolute; left: 14px; bottom: 14px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 8px 12px; font-size: 12px; color: var(--muted); }
+  #legend div { display: flex; align-items: center; gap: 8px; margin: 2px 0; }
+  #legend i { display: inline-block; width: 22px; height: 0; border-top: 2px solid var(--edge); }
+  #legend i.f { border-top: 2px dashed var(--bad); } #legend i.c { border-top: 2px solid var(--comp); }
+  #timeline { height: 150px; border-top: 1px solid var(--line); background: var(--panel); padding: 10px 16px; display: none; position: relative; overflow: auto; }
+  body.traces.hastrace #timeline { display: block; }
+  .bar { position: absolute; height: 12px; border-radius: 6px; min-width: 6px; opacity: .9; }
+  .barlbl { position: absolute; font-size: 11px; color: var(--muted); white-space: nowrap; }
+  #drawer { width: 300px; background: var(--panel); border-left: 1px solid var(--line); padding: 16px; overflow: auto; }
+  #drawer h3 { margin: 0 0 8px; font-size: 15px; }
+  #drawer .k { color: var(--muted); font-size: 12px; margin-top: 12px; }
+  #drawer pre { background: #f3f5f8; border-radius: 8px; padding: 8px; margin: 4px 0; font-size: 12px; overflow: auto; max-height: 180px; }
+  #drawer .err { color: var(--bad); }
+  .hint { color: var(--muted); }
+  /* graph */
+  .node rect { fill: #fff; stroke: #aab2c0; stroke-width: 1.3; }
+  .node text { pointer-events: none; }
+  .node .t { font-weight: 600; font-size: 13px; fill: var(--text); }
+  .node .s { font-size: 11px; fill: var(--muted); }
+  .node { cursor: pointer; }
+  .node.comp rect { fill: var(--comp-bg); stroke: var(--comp); }
+  .node.end rect { rx: 20; }
+  .node.end.completed rect { fill: var(--ok-bg); stroke: var(--ok); }
+  .node.end.compensated rect { fill: var(--comp-bg); stroke: var(--comp); }
+  .node.end.failed rect { fill: var(--bad-bg); stroke: var(--bad); }
+  .node.sel rect { stroke-width: 2.6; }
+  .tracing .node { opacity: .28; }
+  .tracing .node.hit { opacity: 1; }
+  .node.hit.completed rect { fill: var(--ok-bg); stroke: var(--ok); }
+  .node.hit.failed rect { fill: var(--bad-bg); stroke: var(--bad); }
+  .node.hit.running rect, .node.hit.compensating rect { fill: var(--run-bg); stroke: var(--run); }
+  .node.hit.comp.completed rect { fill: var(--comp-bg); stroke: var(--comp); }
+  .node.hit.end.completed rect { fill: var(--ok-bg); stroke: var(--ok); }
+  .node.hit.end.compensated rect { fill: var(--comp-bg); stroke: var(--comp); }
+  .seq circle { fill: var(--text); } .seq text { fill: #fff; font-size: 11px; font-weight: 600; text-anchor: middle; }
+  .edge { fill: none; stroke: var(--edge); stroke-width: 1.5; }
+  .edge.failure { stroke: var(--bad); stroke-dasharray: 6 4; }
+  .edge.compensation { stroke: var(--comp); }
+  .tracing .edge { opacity: .18; }
+  .tracing .edge.taken { opacity: 1; stroke-width: 3; }
+  .lane { font-size: 12px; fill: var(--bad); }
+</style>
+</head>
+<body>
+<header>
+  <span class="logo"><b>◆</b> plexus-flow</span>
+  <select id="flowsel" aria-label="Flow"></select>
+  <div class="toggle" role="tablist">
+    <button id="tab-flow" class="on">Flow</button>
+    <button id="tab-traces">Traces</button>
+  </div>
+  <span style="min-width:220px"></span>
+</header>
+<main>
+  <aside id="traces">
+    <div id="filters"></div>
+    <div id="tracelist"></div>
+  </aside>
+  <section id="stage">
+    <div id="canvas"><div id="legend">
+      <div><i></i> on success</div><div><i class="f"></i> on failure</div><div><i class="c"></i> compensation</div>
+    </div></div>
+    <div id="timeline"></div>
+  </section>
+  <aside id="drawer"><span class="hint">Click a node for details</span></aside>
+</main>
+
+<script>
+(() => {
+  const NS = 'http://www.w3.org/2000/svg';
+  const W = 168, H = 64, GX = 48, GY = 34;
+  const state = { flows: [], flow: null, graph: null, mode: 'flow', filter: '', traces: [], traceId: null, trace: null, node: null };
+  const $ = id => document.getElementById(id);
+  const api = p => fetch('/api/v1' + p).then(r => { if (!r.ok) throw new Error(r.status); return r.json(); });
+  const el = (tag, attrs = {}, parent) => { const e = document.createElementNS(NS, tag); for (const k in attrs) e.setAttribute(k, attrs[k]); if (parent) parent.appendChild(e); return e; };
+  const ms = n => n >= 1000 ? (n / 1000).toFixed(1) + 's' : n + 'ms';
+  const clip = (s, n) => s.length > n ? s.slice(0, n - 1) + '…' : s;
+
+  // ---------- layout ----------
+  function layout(g) {
+    const steps = g.nodes.filter(n => n.kind === 'step');
+    const byId = Object.fromEntries(g.nodes.map(n => [n.id, n]));
+    const layer = {};
+    const depth = n => layer[n.id] ??= n.depends_on?.length ? 1 + Math.max(...n.depends_on.map(d => depth(byId['step:' + d]))) : 0;
+    steps.forEach(depth);
+    const maxLayer = Math.max(0, ...Object.values(layer));
+    const rowIdx = {}, counts = {};
+    steps.forEach(n => { const l = layer[n.id]; rowIdx[n.id] = counts[l] = (counts[l] ?? -1) + 1; });
+    const rows = Math.max(1, ...Object.values(counts).map(c => c + 1));
+    const pos = {};
+    const x = l => 40 + (l + 1) * (W + GX);          // layer -1 is the left-hand terminal column
+    const rowY = i => 50 + i * (H + GY);
+    const compY0 = rowY(rows) + 50;
+    steps.forEach(n => pos[n.id] = { x: x(layer[n.id]), y: rowY(rowIdx[n.id]) });
+    g.nodes.filter(n => n.kind === 'compensation').forEach(n => {
+      const s = byId['step:' + n.undoes];
+      pos[n.id] = { x: x(layer[s.id]), y: compY0 + rowIdx[s.id] * (H + GY) };
+    });
+    pos['end:completed'] = { x: x(maxLayer + 1), y: rowY(0) };
+    pos['end:compensated'] = { x: x(-1), y: compY0 };
+    pos['end:failed'] = { x: x(-1), y: rowY(0) };
+    const hasComp = g.nodes.some(n => n.kind === 'compensation');
+    return { pos, width: x(maxLayer + 1) + W + 60, height: (hasComp ? compY0 + rows * (H + GY) : rowY(rows)) + 30, compY0, hasComp };
+  }
+
+  function anchors(a, b) {
+    const sameRow = Math.abs(a.y - b.y) < 4;
+    if (b.y > a.y + 4) return [{ x: a.x + W / 2, y: a.y + H }, { x: b.x + W / 2, y: b.y }, 'v'];
+    if (sameRow && b.x < a.x) return [{ x: a.x, y: a.y + H / 2 }, { x: b.x + W, y: b.y + H / 2 }, 'h-'];
+    return [{ x: a.x + W, y: a.y + H / 2 }, { x: b.x, y: b.y + H / 2 }, 'h'];
+  }
+  function path(p, q, dir) {
+    if (dir === 'v') { const m = (p.y + q.y) / 2; return `M${p.x},${p.y} C${p.x},${m} ${q.x},${m} ${q.x},${q.y}`; }
+    const m = (p.x + q.x) / 2; return `M${p.x},${p.y} C${m},${p.y} ${m},${q.y} ${q.x},${q.y}`;
+  }
+
+  // ---------- render ----------
+  function render() {
+    const canvas = $('canvas');
+    canvas.querySelector('svg')?.remove();
+    const g = state.graph;
+    if (!g) return;
+    const L = layout(g);
+    const svg = el('svg', { width: L.width, height: L.height, viewBox: `0 0 ${L.width} ${L.height}` });
+    const defs = el('defs', {}, svg);
+    for (const [k, c] of [['success', '#8a93a3'], ['failure', '#d1383d'], ['compensation', '#c98a14']]) {
+      const m = el('marker', { id: 'ar-' + k, viewBox: '0 0 10 10', refX: 9, refY: 5, markerUnits: 'userSpaceOnUse', markerWidth: 10, markerHeight: 10, orient: 'auto-start-reverse' }, defs);
+      el('path', { d: 'M0,0 L10,5 L0,10 z', fill: c }, m);
+    }
+    const tr = state.mode === 'traces' ? state.trace : null;
+    if (tr) svg.classList.add('tracing');
+    if (L.hasComp) { const t = el('text', { class: 'lane', x: 40, y: L.compY0 - 22 }, svg); t.textContent = 'on failure — compensate in reverse'; }
+
+    const taken = new Set(tr?.edges ?? []);
+    for (const e of g.edges) {
+      const a = L.pos[e.from], b = L.pos[e.to];
+      if (!a || !b) continue;
+      const [p, q, dir] = anchors(a, b);
+      const cls = 'edge ' + e.kind + (taken.has(e.id) ? ' taken' : '');
+      el('path', { class: cls, d: path(p, q, dir), 'marker-end': `url(#ar-${e.kind})` }, svg);
+    }
+
+    for (const n of g.nodes) {
+      const p = L.pos[n.id];
+      if (!p) continue;
+      const t = tr?.nodes?.[n.id];
+      let cls = 'node ' + n.kind;
+      if (n.kind === 'end') cls += ' ' + n.id.split(':')[1];
+      if (n.kind === 'compensation') cls += ' comp';
+      if (t) cls += ' hit ' + t.status;
+      if (state.node === n.id) cls += ' sel';
+      const grp = el('g', { class: cls, transform: `translate(${p.x},${p.y})`, 'data-id': n.id }, svg);
+      el('rect', { width: W, height: n.kind === 'end' ? 44 : H, rx: 10, y: n.kind === 'end' ? 10 : 0 }, grp);
+      const title = n.kind === 'compensation' ? '↺ ' + n.label : n.label;
+      const ty = n.kind === 'end' ? 37 : 26;
+      const tt = el('text', { class: 't', x: W / 2, y: ty, 'text-anchor': 'middle' }, grp); tt.textContent = clip(title, 22);
+      let sub = '';
+      if (t && n.kind !== 'end') {
+        if (t.status === 'completed') sub = ms(t.duration_ms) + ' ✓';
+        else if (t.status === 'failed') sub = `attempt ${t.attempts}/${t.max_attempts} ✗ ${t.error ?? ''}`;
+        else sub = t.status + '…';
+      } else if (n.kind === 'step') {
+        const bits = []; if (n.retries) bits.push('retry ×' + n.retries); if (n.timeout_ms) bits.push(ms(n.timeout_ms));
+        if (n.activity && n.activity !== n.label) bits.unshift(n.activity);
+        sub = bits.join(' · ');
+      } else if (n.kind === 'compensation') sub = 'undoes ' + n.undoes;
+      if (sub) { const s = el('text', { class: 's', x: W / 2, y: 46, 'text-anchor': 'middle' }, grp); s.textContent = clip(sub, 30); }
+      if (t) { const sq = el('g', { class: 'seq', transform: 'translate(0,0)' }, grp); el('circle', { r: 10 }, sq); const x = el('text', { y: 4 }, sq); x.textContent = t.seq; }
+      grp.addEventListener('click', () => { state.node = n.id; render(); drawer(); });
+    }
+    canvas.insertBefore(svg, $('legend'));
+  }
+
+  function drawer() {
+    const d = $('drawer'); d.textContent = '';
+    const n = state.graph?.nodes.find(x => x.id === state.node);
+    if (!n) { d.innerHTML = '<span class="hint">Click a node for details</span>'; return; }
+    const h = document.createElement('h3'); h.textContent = n.label; d.appendChild(h);
+    const kv = (k, v, cls) => { const a = document.createElement('div'); a.className = 'k'; a.textContent = k; const b = document.createElement('div'); if (cls) b.className = cls; b.textContent = v; d.append(a, b); };
+    const pre = (k, v) => { if (!v) return; const a = document.createElement('div'); a.className = 'k'; a.textContent = k; const p = document.createElement('pre'); p.textContent = JSON.stringify(v, null, 2); d.append(a, p); };
+    const t = state.mode === 'traces' ? state.trace?.nodes?.[n.id] : null;
+    if (t) {
+      kv('Status', t.status);
+      if (t.error) kv('Error', t.error, 'err');
+      if (t.attempts) kv('Attempts', `${t.attempts} of ${t.max_attempts}`);
+      if (t.duration_ms) kv('Duration', ms(t.duration_ms));
+      pre('Input', t.input); pre('Output', t.output);
+    } else {
+      if (n.kind === 'step') {
+        kv('Activity', n.activity);
+        kv('Retries', String(n.retries || 0));
+        kv('Timeout', n.timeout_ms ? ms(n.timeout_ms) : 'none');
+        kv('Depends on', n.depends_on?.length ? n.depends_on.join(', ') : '—');
+        const c = state.graph.nodes.find(x => x.id === 'comp:' + n.step);
+        kv('If rolled back', c ? c.label : 'nothing to undo');
+      } else if (n.kind === 'compensation') kv('Undoes', n.undoes);
+      else kv('Terminal state', n.label);
+    }
+  }
+
+  function timeline() {
+    const tl = $('timeline'); tl.textContent = '';
+    const tr = state.trace;
+    document.body.classList.toggle('hastrace', state.mode === 'traces' && !!tr);
+    if (!tr || state.mode !== 'traces') return;
+    const total = Math.max(1, tr.duration_ms), start = new Date(tr.started_at).getTime();
+    const wpx = Math.max(tl.clientWidth - 40, 400);
+    const colors = { completed: '#2f9e62', failed: '#d1383d', running: '#2f6fdb', compensating: '#2f6fdb' };
+    tr.path.forEach((id, i) => {
+      const n = tr.nodes[id]; if (id.startsWith('end:')) return;
+      const off = n.started_at ? new Date(n.started_at).getTime() - start : 0;
+      const b = document.createElement('div'); b.className = 'bar';
+      b.style.left = (off / total * wpx) + 'px'; b.style.top = (i * 20 + 4) + 'px'; b.style.width = Math.max(6, n.duration_ms / total * wpx) + 'px';
+      b.style.background = id.startsWith('comp:') ? '#c98a14' : colors[n.status] ?? '#999';
+      const l = document.createElement('div'); l.className = 'barlbl';
+      l.style.left = (off / total * wpx + Math.max(6, n.duration_ms / total * wpx) + 6) + 'px'; l.style.top = (i * 20 + 2) + 'px';
+      l.textContent = `${n.seq} ${state.graph.nodes.find(x => x.id === id)?.label ?? id} ${ms(n.duration_ms)}`;
+      tl.append(b, l);
+    });
+  }
+
+  // ---------- data ----------
+  async function loadFlows() {
+    state.flows = await api('/flows');
+    const sel = $('flowsel'); sel.textContent = '';
+    state.flows.forEach(f => { const o = document.createElement('option'); o.value = f.name; o.textContent = f.name; sel.appendChild(o); });
+    if (!state.flow || !state.flows.some(f => f.name === state.flow)) state.flow = state.flows[0]?.name ?? null;
+    sel.value = state.flow ?? '';
+    if (!state.flow) { $('canvas').querySelector('svg')?.remove(); $('drawer').innerHTML = '<span class="hint">No flows registered yet</span>'; return; }
+    state.graph = await api('/flows/' + encodeURIComponent(state.flow));
+    render(); drawer();
+  }
+
+  async function loadTraces() {
+    if (!state.flow) return;
+    const q = state.filter ? '?status=' + state.filter : '';
+    state.traces = await api('/flows/' + encodeURIComponent(state.flow) + '/traces' + q);
+    const list = $('tracelist'); list.textContent = '';
+    if (!state.traces.length) { const e = document.createElement('div'); e.className = 'empty'; e.textContent = 'No traces'; list.appendChild(e); }
+    state.traces.forEach(t => {
+      const r = document.createElement('div'); r.className = 'row' + (t.workflow_id === state.traceId ? ' sel' : '');
+      const dot = document.createElement('span'); dot.className = 'dot ' + t.status;
+      const id = document.createElement('span'); id.className = 'id'; id.textContent = t.workflow_id; id.title = t.status;
+      const st = document.createElement('span'); st.className = 'dur'; st.textContent = t.status.toLowerCase();
+      const du = document.createElement('span'); du.className = 'dur'; du.textContent = ms(t.duration_ms);
+      r.append(dot, id, du); r.title = t.status;
+      r.addEventListener('click', () => selectTrace(t.workflow_id));
+      list.appendChild(r);
+    });
+  }
+
+  async function selectTrace(id) {
+    state.traceId = id; state.node = null;
+    state.trace = await api('/traces/' + encodeURIComponent(id));
+    loadTraces(); render(); drawer(); timeline();
+  }
+
+  function filters() {
+    const f = $('filters'); f.textContent = '';
+    [['', 'All'], ['COMPLETED', 'Completed'], ['COMPENSATED', 'Compensated'], ['FAILED', 'Failed'], ['RUNNING', 'Running']].forEach(([v, label]) => {
+      const b = document.createElement('button'); b.textContent = label; if (state.filter === v) b.className = 'on';
+      b.onclick = () => { state.filter = v; filters(); loadTraces(); };
+      f.appendChild(b);
+    });
+  }
+
+  function setMode(m) {
+    state.mode = m; state.node = null;
+    document.body.classList.toggle('traces', m === 'traces');
+    $('tab-flow').classList.toggle('on', m === 'flow'); $('tab-traces').classList.toggle('on', m === 'traces');
+    if (m === 'traces') { loadTraces().then(() => { if (!state.trace && state.traces[0]) selectTrace(state.traces[0].workflow_id); }); }
+    render(); drawer(); timeline();
+  }
+
+  $('tab-flow').onclick = () => setMode('flow');
+  $('tab-traces').onclick = () => setMode('traces');
+  $('flowsel').onchange = async e => { state.flow = e.target.value; state.trace = null; state.traceId = null; state.node = null; await loadFlows(); if (state.mode === 'traces') setMode('traces'); };
+
+  // Live refresh: keep the trace list and an in-flight trace current.
+  setInterval(async () => {
+    if (state.mode !== 'traces') return;
+    loadTraces();
+    if (state.traceId && state.trace && !['COMPLETED', 'COMPENSATED', 'FAILED', 'CANCELLED'].includes(state.trace.status)) {
+      state.trace = await api('/traces/' + encodeURIComponent(state.traceId)); render(); timeline();
+    }
+  }, 2000);
+
+  filters();
+  loadFlows().then(() => { if (location.hash === '#traces') setMode('traces'); });
+  $('tab-flow').addEventListener('click', () => history.replaceState(null, '', '#flow'));
+  $('tab-traces').addEventListener('click', () => history.replaceState(null, '', '#traces'));
+})();
+</script>
+</body>
+</html>

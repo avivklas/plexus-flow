@@ -7,8 +7,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/avivklas/plexus/pkg/store"
 	"github.com/avivklas/plexus-flow/pkg/flow"
+	"github.com/avivklas/plexus/pkg/store"
 )
 
 // Ensure Store implements store.Store interface.
