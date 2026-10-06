@@ -8,11 +8,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/avivklas/plexus/pkg/dedup"
-	"github.com/avivklas/plexus/pkg/store"
 	"github.com/avivklas/plexus-flow/pkg/flow"
 	"github.com/avivklas/plexus-flow/pkg/flowstore"
 	"github.com/avivklas/plexus-flow/pkg/worker"
+	"github.com/avivklas/plexus/pkg/dedup"
+	"github.com/avivklas/plexus/pkg/store"
 )
 
 func TestCoordinatorSequentialWorkflow(t *testing.T) {
@@ -178,10 +178,10 @@ func TestCoordinatorSagaRollback(t *testing.T) {
 	reg := worker.NewRegistry()
 
 	var (
-		reserveRun   atomic.Int32
-		chargeRun    atomic.Int32
-		releaseRun   atomic.Int32
-		refundRun    atomic.Int32
+		reserveRun atomic.Int32
+		chargeRun  atomic.Int32
+		releaseRun atomic.Int32
+		refundRun  atomic.Int32
 	)
 
 	reg.Register("reserve-inventory", func(ctx context.Context, input json.RawMessage) (json.RawMessage, error) {

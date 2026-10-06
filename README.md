@@ -197,13 +197,39 @@ Output:
 
 ---
 
-## Showcase: ML Model Release Pipeline
+## Flow Dashboard
 
-A fork-join training pipeline with retries, a human approval gate driven by workflow signals, and automatic saga rollback on rejection. See [examples/mlrelease](examples/mlrelease/README.md).
+A REST API reads like a schema: the path and verb tell you what the server will do. A service built with plexus-flow can be read the same way. It exposes its **flows** (every activity and every transition, including failure and rollback paths) and the **traces** of actual runs on top of them.
+
+Every node running `plexus-flow` serves the dashboard at `/`:
 
 ```bash
-go run ./examples/mlrelease --decision approve   # or: --decision reject
+go run ./cmd/plexus-flow --run-example --simulate-failure --fail-step ship-item
+# open http://127.0.0.1:8080
 ```
+
+### Flow
+
+The shape of the business logic. Solid grey edges are the happy path, red dashed edges show what happens when a step fails, and amber nodes are the compensating actions that undo completed steps in reverse order. Click a node for its activity, retries, timeout, dependencies and what undoes it.
+
+![Flow view](docs/images/dashboard_flow.png)
+
+### Traces
+
+The same graph with one run overlaid: the path taken is highlighted and numbered, untaken branches are faded, and nodes show duration, attempts and errors. Below, a timeline shows when each step ran. Running traces refresh live.
+
+![Traces view](docs/images/dashboard_traces.png)
+
+### Flows & traces API
+
+| Endpoint | Returns |
+|---|---|
+| `GET /api/v1/flows` | Known flows with run counts by status |
+| `GET /api/v1/flows/{name}` | The flow graph: nodes plus `success`, `failure` and `compensation` edges |
+| `GET /api/v1/flows/{name}/traces?status=` | Runs of the flow, newest first |
+| `GET /api/v1/traces/{workflowID}` | One run overlaid on its graph: path, edges taken, per-node duration, attempts, error, input/output |
+
+Failure and rollback edges are derived from step dependencies and compensating actions, so there is nothing extra to declare. Starting a workflow registers its flow. To make a flow visible before its first run, call `coord.RegisterFlow(def)`.
 
 ---
 

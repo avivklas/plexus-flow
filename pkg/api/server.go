@@ -16,11 +16,11 @@ import (
 
 // Server provides the REST HTTP API for Plexus-Flow.
 type Server struct {
-	addr        string
-	coord       *graphflow.Coordinator
-	nodeID      string
-	httpServer  *http.Server
-	listener    net.Listener
+	addr       string
+	coord      *graphflow.Coordinator
+	nodeID     string
+	httpServer *http.Server
+	listener   net.Listener
 }
 
 // NewServer creates a new HTTP API Server.
@@ -36,6 +36,10 @@ func NewServer(addr string, coord *graphflow.Coordinator, nodeID string) *Server
 	mux.HandleFunc("/api/v1/workflows", s.handleWorkflows)
 	mux.HandleFunc("/api/v1/workflows/", s.handleWorkflowByID)
 	mux.HandleFunc("/api/v1/cluster/status", s.handleClusterStatus)
+	mux.HandleFunc("/api/v1/flows", s.handleFlows)
+	mux.HandleFunc("/api/v1/flows/", s.handleFlowByName)
+	mux.HandleFunc("/api/v1/traces/", s.handleTrace)
+	mux.HandleFunc("/", s.handleDashboard)
 
 	s.httpServer = &http.Server{
 		Addr:    addr,

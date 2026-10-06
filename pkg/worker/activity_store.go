@@ -99,8 +99,8 @@ func (s *ActivityStore) Snapshot() ([]byte, error) {
 	defer s.mu.RUnlock()
 
 	data := struct {
-		Tasks         map[string]ActivityTask       `json:"tasks"`
-		Compensations map[string]CompensationTask   `json:"compensations"`
+		Tasks         map[string]ActivityTask     `json:"tasks"`
+		Compensations map[string]CompensationTask `json:"compensations"`
 	}{
 		Tasks:         s.tasks,
 		Compensations: s.compensations,
@@ -115,8 +115,8 @@ func (s *ActivityStore) Restore(data []byte) error {
 	defer s.mu.Unlock()
 
 	var state struct {
-		Tasks         map[string]ActivityTask       `json:"tasks"`
-		Compensations map[string]CompensationTask   `json:"compensations"`
+		Tasks         map[string]ActivityTask     `json:"tasks"`
+		Compensations map[string]CompensationTask `json:"compensations"`
 	}
 
 	if err := json.Unmarshal(data, &state); err != nil {

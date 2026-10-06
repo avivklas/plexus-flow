@@ -16,13 +16,13 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/avivklas/plexus/pkg/dedup"
-	"github.com/avivklas/plexus/pkg/machine"
 	"github.com/avivklas/plexus-flow/pkg/api"
 	"github.com/avivklas/plexus-flow/pkg/flow"
 	"github.com/avivklas/plexus-flow/pkg/flowstore"
 	"github.com/avivklas/plexus-flow/pkg/graphflow"
 	"github.com/avivklas/plexus-flow/pkg/worker"
+	"github.com/avivklas/plexus/pkg/dedup"
+	"github.com/avivklas/plexus/pkg/machine"
 )
 
 // ANSI color codes for rich CLI presentation
@@ -171,6 +171,10 @@ func main() {
 	}
 	defer coord.Close()
 
+	if err := coord.RegisterFlow(orderSagaDefinition()); err != nil {
+		log.Fatalf("failed to register flow: %v", err)
+	}
+
 	// 6. Start HTTP API Server
 	apiServer := api.NewServer(*httpAddr, coord, *nodeID)
 	if err := apiServer.Start(); err != nil {
@@ -264,6 +268,19 @@ func registerOrderSagaActivities(r *worker.Registry, simFail bool, failStepName 
 	})
 }
 
+// orderSagaDefinition is the demo flow: reserve stock, charge, then ship, with
+// every step undone in reverse order if a later one fails.
+func orderSagaDefinition() flow.WorkflowDefinition {
+	return flow.WorkflowDefinition{
+		Name: "order-fulfillment-saga",
+		Steps: []flow.StepDefinition{
+			{Name: "reserve-inventory", Activity: "reserve-inventory", CompensatingAction: "release-inventory"},
+			{Name: "charge-card", Activity: "charge-card", CompensatingAction: "refund-card"},
+			{Name: "ship-item", Activity: "ship-item", CompensatingAction: "cancel-shipment"},
+		},
+	}
+}
+
 func executeExampleSaga(coord *graphflow.Coordinator, simFail bool, failStepName string) {
 	time.Sleep(500 * time.Millisecond)
 
@@ -277,29 +294,7 @@ func executeExampleSaga(coord *graphflow.Coordinator, simFail bool, failStepName
 	}
 	log.Printf("%s========================================================================%s", colorCyan, colorReset)
 
-	def := flow.WorkflowDefinition{
-		Name: "order-fulfillment-saga",
-		Steps: []flow.StepDefinition{
-			{
-				Name:               "reserve-inventory",
-				Activity:           "reserve-inventory",
-				CompensatingAction: "release-inventory",
-				Retries:            0,
-			},
-			{
-				Name:               "charge-card",
-				Activity:           "charge-card",
-				CompensatingAction: "refund-card",
-				Retries:            0,
-			},
-			{
-				Name:               "ship-item",
-				Activity:           "ship-item",
-				CompensatingAction: "cancel-shipment",
-				Retries:            0,
-			},
-		},
-	}
+	def := orderSagaDefinition()
 
 	orderID := fmt.Sprintf("ORD-%d", time.Now().Unix()%10000)
 	inputData := map[string]any{

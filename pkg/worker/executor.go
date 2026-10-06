@@ -8,8 +8,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/avivklas/plexus/pkg/store"
 	"github.com/avivklas/plexus-flow/pkg/flowstore"
+	"github.com/avivklas/plexus/pkg/store"
 )
 
 // WorkflowApplier represents anything that can propose state changes back to the workflow machine.
