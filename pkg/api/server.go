@@ -21,6 +21,7 @@ type Server struct {
 	nodeID     string
 	httpServer *http.Server
 	listener   net.Listener
+	mux        *http.ServeMux
 }
 
 // NewServer creates a new HTTP API Server.
@@ -32,6 +33,7 @@ func NewServer(addr string, coord *graphflow.Coordinator, nodeID string) *Server
 	}
 
 	mux := http.NewServeMux()
+	s.mux = mux
 	mux.HandleFunc("/api/v1/workflows/start", s.handleStartWorkflow)
 	mux.HandleFunc("/api/v1/workflows", s.handleWorkflows)
 	mux.HandleFunc("/api/v1/workflows/", s.handleWorkflowByID)
@@ -48,6 +50,11 @@ func NewServer(addr string, coord *graphflow.Coordinator, nodeID string) *Server
 
 	return s
 }
+
+// Handle mounts an extra handler, for applications embedding the server. It
+// must be called before Start; patterns follow http.ServeMux rules and may not
+// repeat the built-in routes.
+func (s *Server) Handle(pattern string, h http.Handler) { s.mux.Handle(pattern, h) }
 
 // Start begins listening on the configured HTTP address.
 func (s *Server) Start() error {
@@ -138,7 +145,7 @@ func (s *Server) handleWorkflowByID(w http.ResponseWriter, r *http.Request) {
 			}
 			rawPayload, _ := json.Marshal(sigReq.Payload)
 			if err := s.coord.SignalWorkflow(r.Context(), wfID, sigReq.SignalName, rawPayload); err != nil {
-				writeJSONError(w, http.StatusInternalServerError, err.Error())
+				writeJSONError(w, signalErrorStatus(err), err.Error())
 				return
 			}
 			writeJSON(w, http.StatusOK, map[string]string{"status": "signaled"})
@@ -226,4 +233,16 @@ func writeJSON(w http.ResponseWriter, status int, data any) {
 
 func writeJSONError(w http.ResponseWriter, status int, msg string) {
 	writeJSON(w, status, ErrorResponse{Error: msg})
+}
+
+// signalErrorStatus maps a signal failure to an HTTP status. Errors that came
+// back through consensus lose their identity, so the message is matched too.
+func signalErrorStatus(err error) int {
+	switch {
+	case errors.Is(err, flow.ErrWorkflowNotFound) || strings.Contains(err.Error(), flow.ErrWorkflowNotFound.Error()):
+		return http.StatusNotFound
+	case errors.Is(err, flow.ErrUnknownSignal) || strings.Contains(err.Error(), flow.ErrUnknownSignal.Error()):
+		return http.StatusBadRequest
+	}
+	return http.StatusInternalServerError
 }

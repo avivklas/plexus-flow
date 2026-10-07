@@ -19,6 +19,9 @@ const (
 	StatusCompensating Status = "COMPENSATING"
 	StatusCompensated  Status = "COMPENSATED"
 	StatusCancelled    Status = "CANCELLED"
+	// StatusCompensationFailed is terminal: a compensating action failed, so the
+	// effects of some completed steps could not be undone and need attention.
+	StatusCompensationFailed Status = "COMPENSATION_FAILED"
 )
 
 // StepStatus represents the status of an individual step execution.
@@ -32,12 +35,39 @@ const (
 	StepStatusCompensating StepStatus = "COMPENSATING"
 	StepStatusCompensated  StepStatus = "COMPENSATED"
 	StepStatusSkipped      StepStatus = "SKIPPED"
+	// StepStatusCompensationFailed marks a step whose compensating action failed.
+	StepStatusCompensationFailed StepStatus = "COMPENSATION_FAILED"
+)
+
+// StepKind says what a step does when it becomes ready.
+type StepKind string
+
+const (
+	// KindActivity runs an activity on a worker. It is the default.
+	KindActivity StepKind = "activity"
+	// KindWaitSignal parks the step until the workflow receives the named
+	// signal; the signal payload becomes the step output. Timeout, if set,
+	// fails the step with CodeSignalTimeout.
+	KindWaitSignal StepKind = "wait_signal"
+	// KindSleep completes the step after Delay.
+	KindSleep StepKind = "sleep"
+)
+
+// Failure codes the engine itself produces.
+const (
+	CodeSignalTimeout = "SIGNAL_TIMEOUT"
 )
 
 // StepDefinition defines a single activity or task within a workflow.
 type StepDefinition struct {
-	Name               string          `json:"name"`
-	Activity           string          `json:"activity"`
+	Name string `json:"name"`
+	// Kind defaults to KindActivity.
+	Kind     StepKind `json:"kind,omitempty"`
+	Activity string   `json:"activity,omitempty"`
+	// Signal names the signal a KindWaitSignal step waits for.
+	Signal string `json:"signal,omitempty"`
+	// Delay is how long a KindSleep step sleeps.
+	Delay              time.Duration   `json:"delay,omitempty"`
 	Input              json.RawMessage `json:"input,omitempty"`
 	Retries            int             `json:"retries,omitempty"`
 	Timeout            time.Duration   `json:"timeout,omitempty"`
@@ -53,12 +83,19 @@ type WorkflowDefinition struct {
 
 // StepExecution records the runtime state and results of a step execution.
 type StepExecution struct {
-	Name               string          `json:"name"`
-	Activity           string          `json:"activity"`
+	Name     string   `json:"name"`
+	Kind     StepKind `json:"kind,omitempty"`
+	Activity string   `json:"activity,omitempty"`
+	Signal   string   `json:"signal,omitempty"`
+	// Delay is how long a sleep step sleeps.
+	Delay time.Duration `json:"delay,omitempty"`
+	// WakeAt is when a waiting or sleeping step is due to be resolved by the engine.
+	WakeAt             *time.Time      `json:"wake_at,omitempty"`
 	Status             StepStatus      `json:"status"`
 	Input              json.RawMessage `json:"input,omitempty"`
 	Output             json.RawMessage `json:"output,omitempty"`
 	Error              string          `json:"error,omitempty"`
+	ErrorCode          string          `json:"error_code,omitempty"`
 	Attempt            int             `json:"attempt"`
 	MaxRetries         int             `json:"max_retries"`
 	Timeout            time.Duration   `json:"timeout,omitempty"`
@@ -81,21 +118,25 @@ type Event struct {
 
 // WorkflowInstance is the stateful runtime instance of a workflow.
 type WorkflowInstance struct {
-	WorkflowID     string                    `json:"workflow_id"`
-	RunID          string                    `json:"run_id"`
-	DefinitionName string                    `json:"definition_name"`
-	Definition     WorkflowDefinition        `json:"definition"`
-	Status         Status                    `json:"status"`
-	Input          json.RawMessage           `json:"input,omitempty"`
-	Output         json.RawMessage           `json:"output,omitempty"`
-	Error          string                    `json:"error,omitempty"`
-	Steps          map[string]*StepExecution `json:"steps"`
-	StepOrder      []string                  `json:"step_order"`
-	History        []Event                   `json:"history,omitempty"`
-	CreatedAt      time.Time                 `json:"created_at"`
-	UpdatedAt      time.Time                 `json:"updated_at"`
-	CompletedAt    *time.Time                `json:"completed_at,omitempty"`
-	Metadata       map[string]string         `json:"metadata,omitempty"`
+	WorkflowID     string             `json:"workflow_id"`
+	RunID          string             `json:"run_id"`
+	DefinitionName string             `json:"definition_name"`
+	Definition     WorkflowDefinition `json:"definition"`
+	Status         Status             `json:"status"`
+	Input          json.RawMessage    `json:"input,omitempty"`
+	Output         json.RawMessage    `json:"output,omitempty"`
+	Error          string             `json:"error,omitempty"`
+	// ErrorCode is the machine-readable code of the failure that ended the workflow, if the worker supplied one.
+	ErrorCode string                    `json:"error_code,omitempty"`
+	Steps     map[string]*StepExecution `json:"steps"`
+	// Signals buffers payloads that arrived before a step waited for them.
+	Signals     map[string][]json.RawMessage `json:"signals,omitempty"`
+	StepOrder   []string                     `json:"step_order"`
+	History     []Event                      `json:"history,omitempty"`
+	CreatedAt   time.Time                    `json:"created_at"`
+	UpdatedAt   time.Time                    `json:"updated_at"`
+	CompletedAt *time.Time                   `json:"completed_at,omitempty"`
+	Metadata    map[string]string            `json:"metadata,omitempty"`
 }
 
 // NewWorkflowInstance creates a new initialized workflow instance from a definition.
@@ -119,7 +160,10 @@ func NewWorkflowInstance(workflowID, runID string, def WorkflowDefinition, input
 
 		steps[s.Name] = &StepExecution{
 			Name:               s.Name,
+			Kind:               s.Kind,
 			Activity:           s.Activity,
+			Signal:             s.Signal,
+			Delay:              s.Delay,
 			Status:             StepStatusPending,
 			Input:              stepInput,
 			MaxRetries:         s.Retries,
@@ -207,7 +251,7 @@ func (w *WorkflowInstance) NextReadySteps() []*StepExecution {
 
 // NextCompensatingStep returns the next completed step that requires compensation (in reverse order of completion).
 func (w *WorkflowInstance) NextCompensatingStep() *StepExecution {
-	if w.Status == StatusCompleted || w.Status == StatusCompensated || w.Status == StatusCancelled {
+	if w.IsTerminal() {
 		return nil
 	}
 
@@ -239,12 +283,29 @@ func (w *WorkflowInstance) NextCompensatingStep() *StepExecution {
 	return candidates[0]
 }
 
+// DefinesSignal reports whether any step of the workflow waits for the named signal.
+func (w *WorkflowInstance) DefinesSignal(name string) bool {
+	for _, s := range w.Steps {
+		if s.Kind == KindWaitSignal && s.Signal == name {
+			return true
+		}
+	}
+	return false
+}
+
+// IsActivity reports whether the step runs on a worker.
+func (s *StepExecution) IsActivity() bool { return s.Kind == "" || s.Kind == KindActivity }
+
+// IsActivity reports whether the step runs on a worker.
+func (s StepDefinition) IsActivity() bool { return s.Kind == "" || s.Kind == KindActivity }
+
 // IsTerminal returns true if the workflow is in a terminal status.
 func (w *WorkflowInstance) IsTerminal() bool {
 	return w.Status == StatusCompleted ||
 		w.Status == StatusFailed ||
 		w.Status == StatusCompensated ||
-		w.Status == StatusCancelled
+		w.Status == StatusCancelled ||
+		w.Status == StatusCompensationFailed
 }
 
 // AllStepsCompleted returns true if every step in the workflow has status COMPLETED.
@@ -291,4 +352,5 @@ var (
 	ErrWorkflowTerminal     = errors.New("workflow instance is in terminal state")
 	ErrStepNotFound         = errors.New("step not found in workflow")
 	ErrInvalidStepState     = errors.New("invalid step state transition")
+	ErrUnknownSignal        = errors.New("workflow has no step waiting for that signal")
 )
