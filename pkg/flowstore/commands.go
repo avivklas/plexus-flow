@@ -2,6 +2,7 @@ package flowstore
 
 import (
 	"encoding/json"
+	"time"
 
 	"github.com/avivklas/plexus-flow/pkg/flow"
 	"github.com/avivklas/plexus/pkg/store"
@@ -20,6 +21,7 @@ const (
 	CmdCompleteWorkflow         store.CommandType = "flow.workflow.complete"
 	CmdCancelWorkflow           store.CommandType = "flow.workflow.cancel"
 	CmdSignalWorkflow           store.CommandType = "flow.workflow.signal"
+	CmdFireTimer                store.CommandType = "flow.step.timer"
 )
 
 // StartWorkflowRequest initiates a new workflow execution.
@@ -36,6 +38,16 @@ type DispatchStepRequest struct {
 	WorkflowID string `json:"workflow_id"`
 	RunID      string `json:"run_id"`
 	StepName   string `json:"step_name"`
+	// At is the dispatch time that timers count from; zero means the apply time.
+	At time.Time `json:"at,omitempty"`
+}
+
+// FireTimerRequest resolves a sleeping or signal-waiting step whose time has come.
+type FireTimerRequest struct {
+	WorkflowID string    `json:"workflow_id"`
+	RunID      string    `json:"run_id"`
+	StepName   string    `json:"step_name"`
+	At         time.Time `json:"at"`
 }
 
 // CompleteStepRequest marks a step execution as successfully completed with output.
@@ -52,7 +64,9 @@ type FailStepRequest struct {
 	RunID      string `json:"run_id"`
 	StepName   string `json:"step_name"`
 	Error      string `json:"error"`
-	Retryable  bool   `json:"retryable"`
+	// Code is a machine-readable failure code (e.g. "STUDY_NOT_FOUND"); free-form, may be empty.
+	Code      string `json:"code,omitempty"`
+	Retryable bool   `json:"retryable"`
 }
 
 // TriggerCompensationRequest manually or automatically forces workflow into COMPENSATING status.
@@ -83,6 +97,7 @@ type FailCompensationStepRequest struct {
 	RunID      string `json:"run_id"`
 	StepName   string `json:"step_name"`
 	Error      string `json:"error"`
+	Code       string `json:"code,omitempty"`
 }
 
 // CompleteWorkflowRequest marks the entire workflow as COMPLETED.

@@ -72,44 +72,7 @@ func (e *Executor) ExecuteActivity(task ActivityTask) {
 		taskCtx, cancel := context.WithTimeout(e.ctx, timeout)
 		defer cancel()
 
-		maxAttempts := task.Retries + 1
-		var (
-			lastErr error
-			output  json.RawMessage
-		)
-
-		for attempt := 1; attempt <= maxAttempts; attempt++ {
-			select {
-			case <-taskCtx.Done():
-				lastErr = taskCtx.Err()
-				break
-			default:
-			}
-
-			fn, ok := e.registry.Get(task.Activity)
-			if !ok {
-				lastErr = fmt.Errorf("activity function %q not registered", task.Activity)
-				break
-			}
-
-			res, err := fn(taskCtx, task.Input)
-			if err == nil {
-				output = res
-				lastErr = nil
-				break
-			}
-
-			lastErr = err
-			if attempt < maxAttempts {
-				backoff := time.Duration(attempt*15) * time.Millisecond
-				select {
-				case <-time.After(backoff):
-				case <-taskCtx.Done():
-					lastErr = taskCtx.Err()
-					break
-				}
-			}
-		}
+		output, lastErr := e.runWithRetries(taskCtx, task.Activity, task.Input, task.Retries)
 
 		e.mu.RLock()
 		applier := e.applier
@@ -139,6 +102,7 @@ func (e *Executor) ExecuteActivity(task ActivityTask) {
 				RunID:      task.RunID,
 				StepName:   task.StepName,
 				Error:      lastErr.Error(),
+				Code:       CodeOf(lastErr),
 				Retryable:  false,
 			})
 			if err != nil {
@@ -162,17 +126,7 @@ func (e *Executor) ExecuteCompensation(task CompensationTask) {
 		taskCtx, cancel := context.WithTimeout(e.ctx, timeout)
 		defer cancel()
 
-		fn, ok := e.registry.Get(task.Activity)
-		var (
-			output  json.RawMessage
-			lastErr error
-		)
-
-		if !ok {
-			lastErr = fmt.Errorf("compensating action %q not registered", task.Activity)
-		} else {
-			output, lastErr = fn(taskCtx, task.Input)
-		}
+		output, lastErr := e.runWithRetries(taskCtx, task.Activity, task.Input, task.Retries)
 
 		e.mu.RLock()
 		applier := e.applier
@@ -202,10 +156,40 @@ func (e *Executor) ExecuteCompensation(task CompensationTask) {
 				RunID:      task.RunID,
 				StepName:   task.StepName,
 				Error:      lastErr.Error(),
+				Code:       CodeOf(lastErr),
 			})
 			if err != nil {
 				log.Printf("[Executor] Error reporting compensation failure for %s: %v", task.StepName, err)
 			}
 		}
 	}()
+}
+
+// runWithRetries calls the activity up to retries+1 times with a small linear
+// backoff. A NonRetryable error ends the attempts at once.
+func (e *Executor) runWithRetries(ctx context.Context, activity string, input json.RawMessage, retries int) (json.RawMessage, error) {
+	fn, ok := e.registry.Get(activity)
+	if !ok {
+		return nil, fmt.Errorf("activity function %q not registered", activity)
+	}
+	var lastErr error
+	for attempt := 1; attempt <= retries+1; attempt++ {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		out, err := fn(ctx, input)
+		if err == nil {
+			return out, nil
+		}
+		lastErr = err
+		if IsNonRetryable(err) || attempt == retries+1 {
+			break
+		}
+		select {
+		case <-time.After(time.Duration(attempt*15) * time.Millisecond):
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+	return nil, lastErr
 }

@@ -1,0 +1,50 @@
+[project]
+name = "plexus-flow"
+version = "0.1.0"
+description = "Python worker SDK for plexus-flow: run activities and compensations outside the engine process."
+requires-python = ">=3.11"
+dependencies = [
+    "grpcio>=1.70",
+    "protobuf>=5.29",
+]
+
+[dependency-groups]
+dev = [
+    "grpcio-tools>=1.70",
+    "httpx>=0.28",
+    "mypy>=1.13",
+    "mypy-protobuf>=3.6",
+    "pytest>=8.3",
+    "pytest-asyncio>=0.25",
+    "ruff>=0.8",
+    "types-grpcio>=1.0",
+    "types-protobuf>=5.29",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/plexus_flow"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["tests"]
+markers = ["integration: runs against a real plexus-flow server (needs a Go toolchain)"]
+
+[tool.ruff]
+line-length = 100
+extend-exclude = ["src/plexus_flow/_proto"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "ASYNC"]
+
+[tool.mypy]
+strict = true
+exclude = ["src/plexus_flow/_proto"]
+
+[[tool.mypy.overrides]]
+module = ["plexus_flow._proto.*"]
+ignore_errors = true

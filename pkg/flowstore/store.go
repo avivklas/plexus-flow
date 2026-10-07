@@ -92,12 +92,30 @@ func (s *Store) registerHandlers() {
 			return nil, flow.ErrStepNotFound
 		}
 
-		now := time.Now().UTC()
+		now := req.At.UTC()
+		if req.At.IsZero() {
+			now = time.Now().UTC()
+		}
 		step.Status = flow.StepStatusRunning
 		step.Attempt++
 		step.StartedAt = &now
 		wf.UpdatedAt = now
 		wf.RecordEvent("STEP_DISPATCHED", req.StepName, fmt.Sprintf("Step %s dispatched (attempt %d)", req.StepName, step.Attempt), nil)
+
+		switch step.Kind {
+		case flow.KindSleep:
+			wake := now.Add(step.Delay)
+			step.WakeAt = &wake
+		case flow.KindWaitSignal:
+			if step.Timeout > 0 {
+				wake := now.Add(step.Timeout)
+				step.WakeAt = &wake
+			}
+			if queue := wf.Signals[step.Signal]; len(queue) > 0 {
+				wf.Signals[step.Signal] = queue[1:]
+				completeStepLocked(wf, step, queue[0], now)
+			}
+		}
 
 		return step, nil
 	})
@@ -121,22 +139,13 @@ func (s *Store) registerHandlers() {
 			// Idempotent: already completed
 			return wf.Clone(), nil
 		}
-
-		now := time.Now().UTC()
-		step.Status = flow.StepStatusCompleted
-		step.Output = req.Output
-		step.CompletedAt = &now
-		wf.UpdatedAt = now
-		wf.RecordEvent("STEP_COMPLETED", req.StepName, fmt.Sprintf("Step %s completed", req.StepName), req.Output)
-
-		// Check if entire workflow has completed
-		if wf.AllStepsCompleted() {
-			wf.Status = flow.StatusCompleted
-			wf.CompletedAt = &now
-			wf.Output = req.Output
-			wf.RecordEvent("WORKFLOW_COMPLETED", "", "Workflow completed successfully", req.Output)
+		if wf.IsTerminal() || step.Status == flow.StepStatusSkipped {
+			// A worker reporting after the workflow ended or the step was
+			// cancelled must not resurrect it.
+			return wf.Clone(), nil
 		}
 
+		completeStepLocked(wf, step, req.Output, time.Now().UTC())
 		return wf.Clone(), nil
 	})
 
@@ -155,32 +164,12 @@ func (s *Store) registerHandlers() {
 			return nil, flow.ErrStepNotFound
 		}
 
-		now := time.Now().UTC()
-		step.Error = req.Error
-		wf.UpdatedAt = now
-
-		// Check retry policy
-		if req.Retryable && step.Attempt < step.MaxRetries {
-			step.Status = flow.StepStatusPending
-			wf.RecordEvent("STEP_RETRY_SCHEDULED", req.StepName, fmt.Sprintf("Step %s failed (attempt %d/%d), scheduling retry: %s", req.StepName, step.Attempt, step.MaxRetries, req.Error), nil)
+		if wf.IsTerminal() || step.Status == flow.StepStatusSkipped || step.Status == flow.StepStatusCompleted {
+			// Late or duplicate report for a step that no longer runs.
 			return wf.Clone(), nil
 		}
 
-		// Permanent failure for step
-		step.Status = flow.StepStatusFailed
-		wf.Error = fmt.Sprintf("step %s failed: %s", req.StepName, req.Error)
-		wf.RecordEvent("STEP_FAILED", req.StepName, fmt.Sprintf("Step %s failed permanently: %s", req.StepName, req.Error), nil)
-
-		// Check if any steps completed and need saga rollback / compensation
-		if wf.NextCompensatingStep() != nil {
-			wf.Status = flow.StatusCompensating
-			wf.RecordEvent("COMPENSATION_TRIGGERED", req.StepName, "Saga compensation triggered due to step failure", nil)
-		} else {
-			wf.Status = flow.StatusFailed
-			wf.CompletedAt = &now
-			wf.RecordEvent("WORKFLOW_FAILED", req.StepName, "Workflow failed with no compensating actions", nil)
-		}
-
+		failStepLocked(wf, step, req.Error, req.Code, req.Retryable, time.Now().UTC())
 		return wf.Clone(), nil
 	})
 
@@ -241,6 +230,10 @@ func (s *Store) registerHandlers() {
 			return nil, flow.ErrStepNotFound
 		}
 
+		if wf.IsTerminal() || step.Status == flow.StepStatusCompensated {
+			return wf.Clone(), nil
+		}
+
 		now := time.Now().UTC()
 		step.Status = flow.StepStatusCompensated
 		step.CompensatedAt = &now
@@ -267,10 +260,25 @@ func (s *Store) registerHandlers() {
 			return nil, flow.ErrWorkflowNotFound
 		}
 
+		step, exists := wf.Steps[req.StepName]
+		if !exists {
+			return nil, flow.ErrStepNotFound
+		}
+		if wf.IsTerminal() {
+			return wf.Clone(), nil
+		}
+
 		now := time.Now().UTC()
+		step.Status = flow.StepStatusCompensationFailed
+		step.Error = req.Error
+		step.ErrorCode = req.Code
+		wf.Status = flow.StatusCompensationFailed
+		wf.CompletedAt = &now
 		wf.Error = fmt.Sprintf("compensation failed on step %s: %s", req.StepName, req.Error)
+		wf.ErrorCode = req.Code
 		wf.UpdatedAt = now
 		wf.RecordEvent("COMPENSATION_STEP_FAILED", req.StepName, fmt.Sprintf("Compensating action failed: %s", req.Error), nil)
+		wf.RecordEvent("WORKFLOW_COMPENSATION_FAILED", req.StepName, "Workflow could not be fully rolled back", nil)
 
 		return wf.Clone(), nil
 	})
@@ -343,12 +351,172 @@ func (s *Store) registerHandlers() {
 			return nil, flow.ErrWorkflowNotFound
 		}
 
+		if !wf.DefinesSignal(req.SignalName) {
+			return nil, fmt.Errorf("%w: %q", flow.ErrUnknownSignal, req.SignalName)
+		}
+		if wf.IsTerminal() {
+			return wf.Clone(), nil
+		}
+
 		now := time.Now().UTC()
 		wf.UpdatedAt = now
 		wf.RecordEvent("WORKFLOW_SIGNALED", "", fmt.Sprintf("Signal received: %s", req.SignalName), req.Payload)
 
+		if wf.Status == flow.StatusRunning {
+			for _, name := range wf.StepOrder {
+				step := wf.Steps[name]
+				if step.Kind == flow.KindWaitSignal && step.Signal == req.SignalName && step.Status == flow.StepStatusRunning {
+					completeStepLocked(wf, step, req.Payload, now)
+					return wf.Clone(), nil
+				}
+			}
+		}
+		// Nobody is waiting yet: keep it for the step that will.
+		if wf.Signals == nil {
+			wf.Signals = make(map[string][]json.RawMessage)
+		}
+		wf.Signals[req.SignalName] = append(wf.Signals[req.SignalName], req.Payload)
+
 		return wf.Clone(), nil
 	})
+
+	// 12. Fire Timer
+	store.HandleTyped(r, CmdFireTimer, func(ctx context.Context, req FireTimerRequest) (*flow.WorkflowInstance, error) {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+
+		wf, exists := s.workflows[req.WorkflowID]
+		if !exists {
+			return nil, flow.ErrWorkflowNotFound
+		}
+		step, exists := wf.Steps[req.StepName]
+		if !exists {
+			return nil, flow.ErrStepNotFound
+		}
+		if wf.Status != flow.StatusRunning || step.Status != flow.StepStatusRunning ||
+			step.WakeAt == nil || step.WakeAt.After(req.At) {
+			return wf.Clone(), nil // already resolved, or not due
+		}
+
+		switch step.Kind {
+		case flow.KindSleep:
+			completeStepLocked(wf, step, nil, req.At)
+		case flow.KindWaitSignal:
+			failStepLocked(wf, step, fmt.Sprintf("timed out waiting for signal %q", step.Signal), flow.CodeSignalTimeout, false, req.At)
+		}
+		return wf.Clone(), nil
+	})
+}
+
+// completeStepLocked marks a step completed and the workflow completed when it was the last one.
+func completeStepLocked(wf *flow.WorkflowInstance, step *flow.StepExecution, output json.RawMessage, now time.Time) {
+	step.Status = flow.StepStatusCompleted
+	step.Output = output
+	step.WakeAt = nil
+	step.CompletedAt = &now
+	wf.UpdatedAt = now
+	wf.RecordEvent("STEP_COMPLETED", step.Name, fmt.Sprintf("Step %s completed", step.Name), output)
+
+	if wf.AllStepsCompleted() {
+		wf.Status = flow.StatusCompleted
+		wf.CompletedAt = &now
+		wf.Output = output
+		wf.RecordEvent("WORKFLOW_COMPLETED", "", "Workflow completed successfully", output)
+	}
+}
+
+// failStepLocked records a failed attempt: it schedules a retry, or fails the
+// step for good and starts compensation (or fails the workflow).
+func failStepLocked(wf *flow.WorkflowInstance, step *flow.StepExecution, message, code string, retryable bool, now time.Time) {
+	step.Error = message
+	step.ErrorCode = code
+	step.WakeAt = nil
+	wf.UpdatedAt = now
+
+	// Retries is the number of attempts after the first.
+	if retryable && step.Attempt <= step.MaxRetries {
+		step.Status = flow.StepStatusPending
+		wf.RecordEvent("STEP_RETRY_SCHEDULED", step.Name, fmt.Sprintf("Step %s failed (attempt %d/%d), scheduling retry: %s", step.Name, step.Attempt, step.MaxRetries, message), nil)
+		return
+	}
+
+	step.Status = flow.StepStatusFailed
+	wf.Error = fmt.Sprintf("step %s failed: %s", step.Name, message)
+	wf.ErrorCode = code
+	wf.RecordEvent("STEP_FAILED", step.Name, fmt.Sprintf("Step %s failed permanently: %s", step.Name, message), nil)
+
+	// Engine-resolved steps still waiting have nobody to cancel them, so stop them here.
+	for _, other := range wf.Steps {
+		if !other.IsActivity() && other.Status == flow.StepStatusRunning {
+			other.Status = flow.StepStatusSkipped
+			other.WakeAt = nil
+		}
+	}
+
+	if wf.NextCompensatingStep() != nil {
+		wf.Status = flow.StatusCompensating
+		wf.RecordEvent("COMPENSATION_TRIGGERED", step.Name, "Saga compensation triggered due to step failure", nil)
+	} else {
+		wf.Status = flow.StatusFailed
+		wf.CompletedAt = &now
+		wf.RecordEvent("WORKFLOW_FAILED", step.Name, "Workflow failed with no compensating actions", nil)
+	}
+}
+
+// Wait describes a signal-wait step that has not finished yet.
+type Wait struct {
+	Step   string
+	Signal string
+	Status flow.StepStatus
+	// Buffered is how many signals of that name already arrived and are unconsumed.
+	Buffered int
+}
+
+// Waits lists the unfinished signal-wait steps of a running workflow, without
+// copying it. It lets an application decide whether a signal is still due.
+func (s *Store) Waits(workflowID string) []Wait {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	wf, ok := s.workflows[workflowID]
+	if !ok || wf.Status != flow.StatusRunning {
+		return nil
+	}
+	var out []Wait
+	for _, name := range wf.StepOrder {
+		step := wf.Steps[name]
+		if step.Kind != flow.KindWaitSignal {
+			continue
+		}
+		if step.Status == flow.StepStatusPending || step.Status == flow.StepStatusRunning {
+			out = append(out, Wait{Step: name, Signal: step.Signal, Status: step.Status, Buffered: len(wf.Signals[step.Signal])})
+		}
+	}
+	return out
+}
+
+// TimerRef identifies a step whose timer has expired.
+type TimerRef struct {
+	WorkflowID string
+	RunID      string
+	StepName   string
+}
+
+// DueTimers lists running sleep and signal-wait steps whose wake time is not after now.
+func (s *Store) DueTimers(now time.Time) []TimerRef {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var due []TimerRef
+	for _, wf := range s.workflows {
+		if wf.Status != flow.StatusRunning {
+			continue
+		}
+		for _, step := range wf.Steps {
+			if step.Status == flow.StepStatusRunning && step.WakeAt != nil && !step.WakeAt.After(now) {
+				due = append(due, TimerRef{WorkflowID: wf.WorkflowID, RunID: wf.RunID, StepName: step.Name})
+			}
+		}
+	}
+	return due
 }
 
 // GetWorkflow retrieves a workflow instance by ID.
@@ -360,6 +528,21 @@ func (s *Store) GetWorkflow(workflowID string) (*flow.WorkflowInstance, bool) {
 		return nil, false
 	}
 	return wf.Clone(), true
+}
+
+// StepState returns the workflow and step status without copying the workflow.
+func (s *Store) StepState(workflowID, stepName string) (flow.Status, flow.StepStatus, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	wf, ok := s.workflows[workflowID]
+	if !ok {
+		return "", "", false
+	}
+	step, ok := wf.Steps[stepName]
+	if !ok {
+		return wf.Status, "", false
+	}
+	return wf.Status, step.Status, true
 }
 
 // ListWorkflows retrieves all workflow instances.
