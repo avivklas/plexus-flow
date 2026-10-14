@@ -195,6 +195,18 @@ Output:
 ========================================================================
 ```
 
+### 3. Polyglot Microservices Showcase (Go + Python)
+
+For a realistic production-style distributed application, see the [Polyglot Showcase](examples/showcase/):
+- **Go Workers**: Handle transactional holds and logistics (`reserve-inventory`, `authorize-payment`, `dispatch-shipment`).
+- **Python Workers**: Execute ML fraud risk assessment (`evaluate-fraud-risk`), customer data enrichment (`enrich-order-telemetry`), and receipt synthesis (`generate-order-receipt`).
+- **Distributed DAG & Sagas**: Parallel fork-join execution, automatic LIFO compensations across services (`void-authorization`, `release-inventory`), and Exactly-Once Semantics (EOS).
+
+Run the automated polyglot showcase:
+```bash
+./examples/showcase/run_showcase.sh
+```
+
 ---
 
 ## Flow Dashboard

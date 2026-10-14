@@ -1,0 +1,49 @@
+{
+  "name": "smart-fulfillment-saga",
+  "steps": [
+    {
+      "name": "step-reserve-inventory",
+      "activity": "reserve-inventory",
+      "compensating_action": "release-inventory",
+      "retries": 2,
+      "timeout": 5000000000
+    },
+    {
+      "name": "step-authorize-payment",
+      "activity": "authorize-payment",
+      "compensating_action": "void-authorization",
+      "depends_on": ["step-reserve-inventory"],
+      "retries": 2,
+      "timeout": 5000000000
+    },
+    {
+      "name": "step-evaluate-fraud-risk",
+      "activity": "evaluate-fraud-risk",
+      "depends_on": ["step-authorize-payment"],
+      "retries": 1,
+      "timeout": 5000000000
+    },
+    {
+      "name": "step-enrich-order-telemetry",
+      "activity": "enrich-order-telemetry",
+      "depends_on": ["step-authorize-payment"],
+      "retries": 2,
+      "timeout": 5000000000
+    },
+    {
+      "name": "step-dispatch-shipment",
+      "activity": "dispatch-shipment",
+      "compensating_action": "cancel-shipment",
+      "depends_on": ["step-evaluate-fraud-risk", "step-enrich-order-telemetry"],
+      "retries": 2,
+      "timeout": 5000000000
+    },
+    {
+      "name": "step-generate-receipt",
+      "activity": "generate-order-receipt",
+      "depends_on": ["step-dispatch-shipment"],
+      "retries": 2,
+      "timeout": 5000000000
+    }
+  ]
+}
