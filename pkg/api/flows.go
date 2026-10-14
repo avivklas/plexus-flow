@@ -54,7 +54,7 @@ func (s *Server) handleFlows(w http.ResponseWriter, r *http.Request) {
 			fs.Completed++
 		case flow.StatusCompensated:
 			fs.Compensated++
-		case flow.StatusFailed:
+		case flow.StatusFailed, flow.StatusCompensationFailed:
 			fs.Failed++
 		case flow.StatusRunning, flow.StatusCompensating:
 			fs.Running++

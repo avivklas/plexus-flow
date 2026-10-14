@@ -1,0 +1,98 @@
+syntax = "proto3";
+
+package plexusflow.worker.v1;
+
+option go_package = "github.com/avivklas/plexus-flow/pkg/remote/workerpb";
+
+// WorkerService lets activity workers run outside the plexus-flow process.
+//
+// A worker opens one Connect stream, announces the activities it can run, and
+// then receives tasks and reports their results on the same stream. The server
+// never sends more tasks than the worker's max_concurrency. Delivery is
+// at-least-once: a task is redelivered if its worker disconnects, stops
+// heartbeating or exceeds the step timeout, so activities must be idempotent.
+service WorkerService {
+  rpc Connect(stream WorkerMessage) returns (stream ServerMessage);
+}
+
+message WorkerMessage {
+  oneof message {
+    Register register = 1;
+    TaskResult result = 2;
+    Heartbeat heartbeat = 3;
+  }
+}
+
+message ServerMessage {
+  oneof message {
+    Registered registered = 1;
+    Task task = 2;
+    CancelTask cancel = 3;
+  }
+}
+
+// Register must be the first message of a stream.
+message Register {
+  string worker_id = 1;
+  // Activity names this worker can run. Compensating actions are activities too.
+  repeated string activities = 2;
+  // Maximum number of tasks in flight. Zero means 1.
+  int32 max_concurrency = 3;
+}
+
+message Registered {
+  // The worker must send a Heartbeat at least this often.
+  int64 heartbeat_interval_ms = 1;
+}
+
+message Heartbeat {}
+
+enum TaskKind {
+  TASK_KIND_ACTIVITY = 0;
+  // Compensation runs the compensating action of a completed step.
+  TASK_KIND_COMPENSATION = 1;
+}
+
+message Task {
+  // Identifies this delivery; echo it in TaskResult.
+  string task_id = 1;
+  TaskKind kind = 2;
+  string workflow_id = 3;
+  string run_id = 4;
+  string step_name = 5;
+  string activity = 6;
+  bytes input = 7;
+  // Outputs of the steps this step depends on, by step name.
+  map<string, bytes> dependency_outputs = 8;
+  map<string, string> metadata = 9;
+  // 1-based attempt number of the step.
+  int32 attempt = 10;
+  // The task is cancelled by the server when this elapses; zero means no limit.
+  int64 timeout_ms = 11;
+}
+
+message CancelTask {
+  string task_id = 1;
+  string reason = 2;
+}
+
+message TaskResult {
+  string task_id = 1;
+  oneof outcome {
+    Success success = 2;
+    Failure failure = 3;
+  }
+}
+
+message Success {
+  bytes output = 1;
+}
+
+message Failure {
+  // Machine-readable code, free-form and optional.
+  string code = 1;
+  string message = 2;
+  // A retryable failure consumes one of the step's retries; a permanent one
+  // fails the step at once.
+  bool retryable = 3;
+}

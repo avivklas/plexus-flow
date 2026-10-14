@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -96,10 +97,10 @@ func TestHTTPAPIAndSDK(t *testing.T) {
 		t.Fatalf("expected history events, got none")
 	}
 
-	// 5. Signal Workflow
+	// 5. Signal Workflow: only signals some step waits for are accepted
 	err = client.SignalWorkflow(ctx, "wf-api-1", "user-approved", map[string]string{"by": "manager"})
-	if err != nil {
-		t.Fatalf("SignalWorkflow failed: %v", err)
+	if err == nil || !strings.Contains(err.Error(), "400") {
+		t.Fatalf("expected a 400 for a signal no step waits for, got %v", err)
 	}
 
 	// 6. Cancel Workflow

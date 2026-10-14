@@ -38,6 +38,17 @@ func (r *Registry) Get(name string) (ActivityFunc, bool) {
 	return fn, ok
 }
 
+// Names lists the registered activities.
+func (r *Registry) Names() []string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	names := make([]string, 0, len(r.activities))
+	for n := range r.activities {
+		names = append(names, n)
+	}
+	return names
+}
+
 // RegisterTyped is a helper to register strongly-typed activity handlers.
 func RegisterTyped[In any, Out any](r *Registry, name string, fn func(ctx context.Context, input In) (Out, error)) {
 	r.Register(name, func(ctx context.Context, rawInput json.RawMessage) (json.RawMessage, error) {

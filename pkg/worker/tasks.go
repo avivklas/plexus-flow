@@ -23,6 +23,10 @@ type ActivityTask struct {
 	Timeout    time.Duration   `json:"timeout,omitempty"`
 	Retries    int             `json:"retries,omitempty"`
 	Attempt    int             `json:"attempt,omitempty"`
+	// DependencyOutputs holds the outputs of the steps this step depends on, by step name.
+	DependencyOutputs map[string]json.RawMessage `json:"dependency_outputs,omitempty"`
+	// Metadata is the workflow metadata.
+	Metadata map[string]string `json:"metadata,omitempty"`
 }
 
 // CompensationTask represents a scheduled compensating action execution.

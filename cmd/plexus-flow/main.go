@@ -7,22 +7,17 @@ import (
 	"flag"
 	"fmt"
 	"log"
-	"net"
 	"os"
 	"os/signal"
-	"path/filepath"
-	"strconv"
 	"strings"
 	"syscall"
 	"time"
 
-	"github.com/avivklas/plexus-flow/pkg/api"
 	"github.com/avivklas/plexus-flow/pkg/flow"
 	"github.com/avivklas/plexus-flow/pkg/flowstore"
 	"github.com/avivklas/plexus-flow/pkg/graphflow"
+	"github.com/avivklas/plexus-flow/pkg/server"
 	"github.com/avivklas/plexus-flow/pkg/worker"
-	"github.com/avivklas/plexus/pkg/dedup"
-	"github.com/avivklas/plexus/pkg/machine"
 )
 
 // ANSI color codes for rich CLI presentation
@@ -41,6 +36,7 @@ func main() {
 	var (
 		nodeID          = flag.String("id", "node-1", "Unique node identifier in cluster")
 		httpAddr        = flag.String("http-addr", "127.0.0.1:8080", "HTTP REST API listen address")
+		grpcAddr        = flag.String("grpc-addr", "127.0.0.1:9090", "gRPC address for remote activity workers (empty disables)")
 		raftAddr        = flag.String("raft-addr", "127.0.0.1:9000", "Raft consensus listen address for workflow state")
 		actRaftAddr     = flag.String("act-raft-addr", "", "Raft consensus listen address for activity dispatcher (default: raft-addr + 1)")
 		dataDir         = flag.String("data-dir", "./data", "Directory for persistent Raft logs and dedup records")
@@ -52,144 +48,44 @@ func main() {
 	)
 	flag.Parse()
 
-	// Compute activity raft address if not specified
-	if *actRaftAddr == "" {
-		host, portStr, err := net.SplitHostPort(*raftAddr)
-		if err == nil {
-			if port, err := strconv.Atoi(portStr); err == nil {
-				*actRaftAddr = net.JoinHostPort(host, strconv.Itoa(port+1))
-			}
-		}
-		if *actRaftAddr == "" {
-			*actRaftAddr = "127.0.0.1:9001"
-		}
-	}
-
-	// Auto-bootstrap if no join addresses given
-	if !*bootstrap && *joinAddrs == "" {
-		*bootstrap = true
-	}
-
 	printBanner()
 
-	log.Printf("%s[Plexus-Flow]%s Node ID: %s%s%s", colorCyan, colorReset, colorBold, *nodeID, colorReset)
-	log.Printf("%s[Plexus-Flow]%s Workflow Raft: %s", colorCyan, colorReset, *raftAddr)
-	log.Printf("%s[Plexus-Flow]%s Activity Raft: %s", colorCyan, colorReset, *actRaftAddr)
-	log.Printf("%s[Plexus-Flow]%s HTTP API:      http://%s", colorCyan, colorReset, *httpAddr)
-	log.Printf("%s[Plexus-Flow]%s Data Dir:      %s", colorCyan, colorReset, *dataDir)
-
-	if err := os.MkdirAll(*dataDir, 0755); err != nil {
-		log.Fatalf("failed to create data dir: %v", err)
-	}
-
-	// 1. Initialize Activity Registry
 	registry := worker.NewRegistry()
 	registerOrderSagaActivities(registry, *simulateFailure, *failStep)
 
-	// 2. Initialize Stores
-	flowStore := flowstore.New()
-	actStore := worker.NewActivityStore()
-
-	dedupPath := filepath.Join(*dataDir, "dedup.db")
-	var dedupStore dedup.Store
-	fStore, err := dedup.NewFileStore(dedupPath)
-	if err != nil {
-		log.Printf("%s[Warning]%s Failed to init persistent dedup store, falling back to memory: %v", colorYellow, colorReset, err)
-		dedupStore = dedup.NewMemoryStore()
-	} else {
-		dedupStore = fStore
-	}
-
-	// 3. Initialize Upstream Workflow Raft Machine
-	upDir := filepath.Join(*dataDir, "workflow-raft")
-	upCfg := machine.DefaultConfig(
-		machine.MachineID(*nodeID+"-wf"),
-		&machine.Node{ID: *nodeID + "-wf", Address: *raftAddr, Voter: true},
-		upDir,
-	)
-	upCfg.Bootstrap = *bootstrap
+	var join []string
 	if *joinAddrs != "" {
-		for _, addr := range strings.Split(*joinAddrs, ",") {
-			trimmed := strings.TrimSpace(addr)
-			if trimmed != "" {
-				upCfg.JoinAddrs = append(upCfg.JoinAddrs, trimmed)
-			}
-		}
+		join = strings.Split(*joinAddrs, ",")
 	}
-	upMachine := machine.NewRaftMachine(upCfg)
-	upMachine.Register(flowStore)
 
-	// 4. Initialize Downstream Activity Raft Machine
-	downDir := filepath.Join(*dataDir, "activity-raft")
-	downCfg := machine.DefaultConfig(
-		machine.MachineID(*nodeID+"-act"),
-		&machine.Node{ID: *nodeID + "-act", Address: *actRaftAddr, Voter: true},
-		downDir,
-	)
-	downCfg.Bootstrap = *bootstrap
-	downMachine := machine.NewRaftMachine(downCfg)
-	downMachine.Register(actStore)
-
-	// Start consensus engines
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	log.Printf("%s[Consensus]%s Starting Raft consensus engines...", colorBlue, colorReset)
-	if err := upMachine.Start(ctx); err != nil {
-		log.Fatalf("failed to start workflow raft machine: %v", err)
-	}
-	defer upMachine.Stop()
-
-	if err := downMachine.Start(ctx); err != nil {
-		log.Fatalf("failed to start activity raft machine: %v", err)
-	}
-	defer downMachine.Stop()
-
-	// Wait for leader election
-	log.Printf("%s[Consensus]%s Waiting for Raft leadership...", colorBlue, colorReset)
-	deadline := time.Now().Add(10 * time.Second)
-	for !upMachine.IsLeader() || !downMachine.IsLeader() {
-		if time.Now().After(deadline) {
-			log.Fatalf("timed out waiting for Raft leader election")
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
-	log.Printf("%s[Consensus]%s Node elected leader on both machines! Raft quorum active.", colorGreen, colorReset)
-
-	// 5. Initialize Raft Graph Coordinator
-	coord, err := graphflow.NewCoordinator(graphflow.Config{
-		GraphName:     "plexus-flow-" + *nodeID,
-		Upstream:      upMachine,
-		Downstream:    downMachine,
-		FlowStore:     flowStore,
-		ActivityStore: actStore,
-		DedupStore:    dedupStore,
-		Registry:      registry,
+	log.Printf("%s[Consensus]%s Starting node %s and waiting for Raft leadership...", colorBlue, colorReset, *nodeID)
+	srv, err := server.Start(ctx, server.Options{
+		NodeID:      *nodeID,
+		HTTPAddr:    *httpAddr,
+		GRPCAddr:    *grpcAddr,
+		RaftAddr:    *raftAddr,
+		ActRaftAddr: *actRaftAddr,
+		DataDir:     *dataDir,
+		Join:        join,
+		Bootstrap:   *bootstrap,
+		Registry:    registry,
 	})
 	if err != nil {
-		log.Fatalf("failed to initialize Raft Graph coordinator: %v", err)
+		log.Fatalf("failed to start plexus-flow: %v", err)
 	}
-	defer coord.Close()
+	defer srv.Close()
 
-	if err := coord.RegisterFlow(orderSagaDefinition()); err != nil {
+	if err := srv.Coordinator.RegisterFlow(orderSagaDefinition()); err != nil {
 		log.Fatalf("failed to register flow: %v", err)
 	}
 
-	// 6. Start HTTP API Server
-	apiServer := api.NewServer(*httpAddr, coord, *nodeID)
-	if err := apiServer.Start(); err != nil {
-		log.Fatalf("failed to start HTTP API server on %s: %v", *httpAddr, err)
-	}
-	defer apiServer.Close()
-
-	log.Printf("%s[API]%s HTTP API listening on %s%s%s", colorGreen, colorReset, colorBold, apiServer.Addr(), colorReset)
-
-	// 7. If --run-example is set, launch the Order Processing Saga!
 	if *runExample {
-		go executeExampleSaga(coord, *simulateFailure, *failStep)
+		go executeExampleSaga(srv.Coordinator, *simulateFailure, *failStep)
 	}
 
-	// Wait for shutdown
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
 	<-sigCh

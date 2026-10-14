@@ -136,7 +136,7 @@ func BuildGraph(def WorkflowDefinition) FlowGraph {
 	for _, s := range def.Steps {
 		g.Nodes = append(g.Nodes, GraphNode{
 			ID: StepNodeID(s.Name), Kind: NodeStep, Label: s.Name, Step: s.Name,
-			Activity: s.Activity, Retries: s.Retries, TimeoutMS: s.Timeout.Milliseconds(),
+			Activity: s.label(), Retries: s.Retries, TimeoutMS: s.Timeout.Milliseconds(),
 			DependsOn: append([]string(nil), s.DependsOn...),
 		})
 	}
@@ -348,7 +348,7 @@ func BuildTrace(w *WorkflowInstance) Trace {
 		t.Nodes[EndCompleted] = TraceNode{NodeID: EndCompleted, Status: "completed", StartedAt: w.CompletedAt}
 	case StatusCompensated:
 		t.Nodes[EndCompensated] = TraceNode{NodeID: EndCompensated, Status: "completed", StartedAt: w.CompletedAt}
-	case StatusFailed:
+	case StatusFailed, StatusCompensationFailed:
 		t.Nodes[EndFailed] = TraceNode{NodeID: EndFailed, Status: "failed", StartedAt: w.CompletedAt}
 	}
 
@@ -420,4 +420,15 @@ func spanMS(from, to *time.Time) int64 {
 		return 0
 	}
 	return to.Sub(*from).Milliseconds()
+}
+
+// label is what a step node shows as its activity.
+func (s StepDefinition) label() string {
+	switch s.Kind {
+	case KindWaitSignal:
+		return "wait_signal:" + s.Signal
+	case KindSleep:
+		return "sleep:" + s.Delay.String()
+	}
+	return s.Activity
 }

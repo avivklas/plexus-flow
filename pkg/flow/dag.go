@@ -23,8 +23,8 @@ func (d *WorkflowDefinition) Validate() error {
 		if s.Name == "" {
 			return fmt.Errorf("step name cannot be empty")
 		}
-		if s.Activity == "" {
-			return fmt.Errorf("step %q must specify an activity", s.Name)
+		if err := s.validateKind(); err != nil {
+			return err
 		}
 		if names[s.Name] {
 			return fmt.Errorf("duplicate step name %q", s.Name)
@@ -164,4 +164,30 @@ func (d *WorkflowDefinition) TopologicalOrder() ([]string, error) {
 	}
 
 	return order, nil
+}
+
+func (s StepDefinition) validateKind() error {
+	switch s.Kind {
+	case "", KindActivity:
+		if s.Activity == "" {
+			return fmt.Errorf("step %q must specify an activity", s.Name)
+		}
+	case KindWaitSignal:
+		if s.Signal == "" {
+			return fmt.Errorf("step %q waits for a signal and must name it", s.Name)
+		}
+		if s.CompensatingAction != "" {
+			return fmt.Errorf("step %q: a wait_signal step cannot have a compensating action", s.Name)
+		}
+	case KindSleep:
+		if s.Delay <= 0 {
+			return fmt.Errorf("step %q sleeps and needs a positive delay", s.Name)
+		}
+		if s.CompensatingAction != "" {
+			return fmt.Errorf("step %q: a sleep step cannot have a compensating action", s.Name)
+		}
+	default:
+		return fmt.Errorf("step %q has unknown kind %q", s.Name, s.Kind)
+	}
+	return nil
 }

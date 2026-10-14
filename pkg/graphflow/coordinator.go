@@ -28,6 +28,9 @@ type Config struct {
 	ActivityStore *worker.ActivityStore
 	DedupStore    dedup.Store
 	Registry      *worker.Registry
+	// TimerInterval is how often the leader looks for expired sleep and
+	// signal-wait timers. Defaults to 100ms.
+	TimerInterval time.Duration
 }
 
 // Coordinator wires the Raft Graph command topology between workflow states and activity execution.
@@ -39,10 +42,13 @@ type Coordinator struct {
 	activityStore *worker.ActivityStore
 	dedupStore    dedup.Store
 	executor      *worker.Executor
+	dispatcher    worker.Dispatcher
 	registry      *worker.Registry
 	edge          *graph.Edge
 	ownsMachines  bool
 	cleanupFns    []func()
+	stopTimers    chan struct{}
+	timersDone    chan struct{}
 
 	flowsMu sync.RWMutex
 	flows   map[string]flow.WorkflowDefinition
@@ -83,15 +89,6 @@ func NewCoordinator(cfg Config) (*Coordinator, error) {
 	executor := worker.NewExecutor(cfg.Registry, cfg.Upstream)
 
 	// Hook activity store callbacks into executor
-	cfg.ActivityStore.SetListeners(
-		func(task worker.ActivityTask) {
-			executor.ExecuteActivity(task)
-		},
-		func(task worker.CompensationTask) {
-			executor.ExecuteCompensation(task)
-		},
-	)
-
 	c := &Coordinator{
 		cfg:           cfg,
 		graph:         g,
@@ -101,7 +98,12 @@ func NewCoordinator(cfg Config) (*Coordinator, error) {
 		executor:      executor,
 		registry:      cfg.Registry,
 		flows:         make(map[string]flow.WorkflowDefinition),
+		dispatcher:    executor,
 	}
+	cfg.ActivityStore.SetListeners(
+		func(task worker.ActivityTask) { c.currentDispatcher().DispatchActivity(task) },
+		func(task worker.CompensationTask) { c.currentDispatcher().DispatchCompensation(task) },
+	)
 
 	// Connect Upstream -> Downstream via Raft Graph Pipe
 	edge := g.Pipe(cfg.Upstream, cfg.Downstream, func(ctx context.Context, cmd *store.Command, res any) ([]*store.Command, error) {
@@ -112,8 +114,19 @@ func NewCoordinator(cfg Config) (*Coordinator, error) {
 		flowstore.CmdFailStep,
 		flowstore.CmdTriggerCompensation,
 		flowstore.CmdCompleteCompensationStep,
+		flowstore.CmdCancelWorkflow,
+		flowstore.CmdSignalWorkflow,
+		flowstore.CmdFireTimer,
 	)
 	c.edge = edge
+
+	if cfg.TimerInterval <= 0 {
+		cfg.TimerInterval = 100 * time.Millisecond
+		c.cfg.TimerInterval = cfg.TimerInterval
+	}
+	c.stopTimers = make(chan struct{})
+	c.timersDone = make(chan struct{})
+	go c.runTimers()
 
 	return c, nil
 }
@@ -137,31 +150,59 @@ func (c *Coordinator) transformWorkflowEvent(ctx context.Context, cmd *store.Com
 
 	switch wf.Status {
 	case flow.StatusRunning:
-		// Find ready steps
-		readySteps := wf.NextReadySteps()
-		for _, step := range readySteps {
-			// Mark step running on upstream state machine so subsequent concurrent commits do not re-dispatch it
-			_, _ = c.cfg.Upstream.Apply(ctx, flowstore.CmdDispatchStep, flowstore.DispatchStepRequest{
-				WorkflowID: wf.WorkflowID,
-				RunID:      wf.RunID,
-				StepName:   step.Name,
-			})
+		// Resolving a step can ready the next one without any further command
+		// (a buffered signal completes its wait on dispatch), so go again
+		// until dispatching changes nothing but running state.
+		for wf.Status == flow.StatusRunning {
+			resolvedInline := false
+			for _, step := range wf.NextReadySteps() {
+				// Mark step running on upstream state machine so subsequent concurrent commits do not re-dispatch it
+				_, _ = c.cfg.Upstream.Apply(ctx, flowstore.CmdDispatchStep, flowstore.DispatchStepRequest{
+					WorkflowID: wf.WorkflowID,
+					RunID:      wf.RunID,
+					StepName:   step.Name,
+					At:         time.Now().UTC(),
+				})
 
-			task := worker.ActivityTask{
-				WorkflowID: wf.WorkflowID,
-				RunID:      wf.RunID,
-				StepName:   step.Name,
-				Activity:   step.Activity,
-				Input:      step.Input,
-				Timeout:    step.Timeout,
-				Retries:    step.MaxRetries,
-				Attempt:    step.Attempt,
+				if !step.IsActivity() {
+					if _, status, ok := c.flowStore.StepState(wf.WorkflowID, step.Name); ok && status == flow.StepStatusCompleted {
+						resolvedInline = true
+					}
+					continue
+				}
+
+				task := worker.ActivityTask{
+					WorkflowID: wf.WorkflowID,
+					RunID:      wf.RunID,
+					StepName:   step.Name,
+					Activity:   step.Activity,
+					Input:      step.Input,
+					Timeout:    step.Timeout,
+					Retries:    step.MaxRetries,
+					Attempt:    step.Attempt,
+					Metadata:   wf.Metadata,
+				}
+				if len(step.DependsOn) > 0 {
+					task.DependencyOutputs = make(map[string]json.RawMessage, len(step.DependsOn))
+					for _, dep := range step.DependsOn {
+						if d := wf.Steps[dep]; d != nil {
+							task.DependencyOutputs[dep] = d.Output
+						}
+					}
+				}
+				dCmd, err := store.NewCommand(worker.CmdDispatchActivity, task)
+				if err != nil {
+					continue
+				}
+				downstreamCmds = append(downstreamCmds, dCmd)
 			}
-			dCmd, err := store.NewCommand(worker.CmdDispatchActivity, task)
-			if err != nil {
-				continue
+			if !resolvedInline {
+				break
 			}
-			downstreamCmds = append(downstreamCmds, dCmd)
+			var ok bool
+			if wf, ok = c.flowStore.GetWorkflow(wf.WorkflowID); !ok {
+				break
+			}
 		}
 
 	case flow.StatusCompensating:
@@ -197,6 +238,56 @@ func (c *Coordinator) transformWorkflowEvent(ctx context.Context, cmd *store.Com
 
 	return downstreamCmds, nil
 }
+
+// runTimers resolves expired sleep and signal-wait steps. Only the leader
+// fires timers; each firing is idempotent, so overlapping leaders are harmless.
+func (c *Coordinator) runTimers() {
+	defer close(c.timersDone)
+	ticker := time.NewTicker(c.cfg.TimerInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-c.stopTimers:
+			return
+		case <-ticker.C:
+		}
+		if !c.cfg.Upstream.IsLeader() {
+			continue
+		}
+		now := time.Now().UTC()
+		for _, due := range c.flowStore.DueTimers(now) {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			_, _ = c.cfg.Upstream.Apply(ctx, flowstore.CmdFireTimer, flowstore.FireTimerRequest{
+				WorkflowID: due.WorkflowID, RunID: due.RunID, StepName: due.StepName, At: now,
+			})
+			cancel()
+		}
+	}
+}
+
+// Executor returns the in-process executor that runs activities from the local registry.
+func (c *Coordinator) Executor() *worker.Executor { return c.executor }
+
+// SetDispatcher replaces where committed tasks go. By default they run in the
+// local executor; a remote broker takes over to hand them to connected workers
+// (and may fall back to the executor for activities it has no worker for).
+func (c *Coordinator) SetDispatcher(d worker.Dispatcher) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if d == nil {
+		d = c.executor
+	}
+	c.dispatcher = d
+}
+
+func (c *Coordinator) currentDispatcher() worker.Dispatcher {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.dispatcher
+}
+
+// Upstream returns the workflow machine; results from workers are applied to it.
+func (c *Coordinator) Upstream() machine.Machine { return c.cfg.Upstream }
 
 // RegisterFlow declares a flow so it is visible through the flows API even
 // before any run has started. Starting a workflow registers its flow as well.
@@ -302,6 +393,12 @@ func (c *Coordinator) Close() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
+	select {
+	case <-c.stopTimers:
+	default:
+		close(c.stopTimers)
+	}
+	<-c.timersDone
 	c.executor.Close()
 	c.graph.Close()
 

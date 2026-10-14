@@ -209,3 +209,61 @@ func TestActivityStoreDispatch(t *testing.T) {
 		t.Fatalf("unexpected dispatched task: %+v", dispatchedTask)
 	}
 }
+
+func TestWorkerNonRetryableErrorStopsRetrying(t *testing.T) {
+	reg := NewRegistry()
+	var attempts atomic.Int32
+	reg.Register("bad-input", func(ctx context.Context, input json.RawMessage) (json.RawMessage, error) {
+		attempts.Add(1)
+		return nil, NonRetryable(errors.New("study not found"))
+	})
+	applier := &mockApplier{}
+	exec := NewExecutor(reg, applier)
+	defer exec.Close()
+
+	exec.ExecuteActivity(ActivityTask{WorkflowID: "wf", RunID: "r", StepName: "s", Activity: "bad-input", Retries: 5, Timeout: time.Second})
+	waitApplied(t, applier, 1)
+
+	if attempts.Load() != 1 {
+		t.Fatalf("a non-retryable error must not be retried, got %d attempts", attempts.Load())
+	}
+	if applier.applied[0] != flowstore.CmdFailStep {
+		t.Fatalf("expected CmdFailStep, got %v", applier.applied[0])
+	}
+}
+
+func TestWorkerCompensationRetries(t *testing.T) {
+	reg := NewRegistry()
+	var attempts atomic.Int32
+	reg.Register("flaky-undo", func(ctx context.Context, input json.RawMessage) (json.RawMessage, error) {
+		if attempts.Add(1) < 3 {
+			return nil, errors.New("transient")
+		}
+		return json.RawMessage(`{}`), nil
+	})
+	applier := &mockApplier{}
+	exec := NewExecutor(reg, applier)
+	defer exec.Close()
+
+	exec.ExecuteCompensation(CompensationTask{WorkflowID: "wf", RunID: "r", StepName: "s", Activity: "flaky-undo", Retries: 3, Timeout: time.Second})
+	waitApplied(t, applier, 1)
+
+	if applier.applied[0] != flowstore.CmdCompleteCompensationStep || attempts.Load() != 3 {
+		t.Fatalf("expected compensation to succeed on the 3rd attempt, got %v after %d attempts", applier.applied, attempts.Load())
+	}
+}
+
+func waitApplied(t *testing.T, a *mockApplier, n int) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		a.mu.Lock()
+		got := len(a.applied)
+		a.mu.Unlock()
+		if got >= n {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for %d reports", n)
+}
