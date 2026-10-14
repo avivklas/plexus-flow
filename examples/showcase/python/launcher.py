@@ -97,6 +97,12 @@ def main() -> None:
     parser.add_argument("--http-addr", default="http://127.0.0.1:8080", help="HTTP API base URL")
     parser.add_argument("--order-id", default="", help="Custom order identifier")
     parser.add_argument(
+        "--sleep-ms",
+        type=int,
+        default=100,
+        help="Activity simulation sleep in milliseconds (pass 0 for instant execution)",
+    )
+    parser.add_argument(
         "--simulate-fraud",
         action="store_true",
         help="Simulate AI fraud detection rejection (triggers Saga rollback)",
@@ -125,13 +131,18 @@ def main() -> None:
         "simulate_fraud": args.simulate_fraud,
         "simulate_payment_fail": args.simulate_payment_fail,
         "simulate_shipping_fail": args.simulate_shipping_fail,
+        "sleep_ms": args.sleep_ms,
     }
 
     start_req = {
         "workflow_id": order_id,
         "definition": get_workflow_definition(),
         "input": payload,
-        "metadata": {"initiated_by": "python-launcher", "region": "us-west"},
+        "metadata": {
+            "initiated_by": "python-launcher",
+            "region": "us-west",
+            "sleep_ms": str(args.sleep_ms),
+        },
     }
 
     print(f"\n{CYAN}========================================================================{RESET}")

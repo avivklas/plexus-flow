@@ -8,6 +8,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -61,6 +62,7 @@ Commands:
             Options:
               --http-addr=http://127.0.0.1:8080
               --order-id=ORD-9901
+              --sleep-ms=100 (pass 0 for instant execution with no delay)
               --simulate-fraud (trigger AI fraud detection rollback)
               --simulate-payment-fail (trigger payment decline rollback)
               --simulate-shipping-fail (trigger courier failure rollback)`)
@@ -122,6 +124,7 @@ func runSubmit(args []string) {
 	fs := flag.NewFlagSet("submit", flag.ExitOnError)
 	httpAddr := fs.String("http-addr", "http://127.0.0.1:8080", "Plexus-Flow HTTP API address")
 	orderID := fs.String("order-id", "", "Workflow Order ID")
+	sleepMs := fs.Int("sleep-ms", 100, "Activity simulation sleep in milliseconds (0 for instant execution)")
 	simFraud := fs.Bool("simulate-fraud", false, "Simulate AI fraud detection failure")
 	simPay := fs.Bool("simulate-payment-fail", false, "Simulate payment authorization failure")
 	simShip := fs.Bool("simulate-shipping-fail", false, "Simulate shipping courier failure")
@@ -144,6 +147,7 @@ func runSubmit(args []string) {
 		SimulateFraud:    *simFraud,
 		SimulatePayFail:  *simPay,
 		SimulateShipFail: *simShip,
+		SleepMs:          sleepMs,
 	}
 	rawInput, _ := json.Marshal(input)
 
@@ -219,8 +223,9 @@ func runSubmit(args []string) {
 		Definition: def,
 		Input:      rawInput,
 		Metadata: map[string]string{
-			"source": "showcase-launcher",
-			"tier":   "enterprise",
+			"source":   "showcase-launcher",
+			"tier":     "enterprise",
+			"sleep_ms": strconv.Itoa(*sleepMs),
 		},
 	})
 	if err != nil {

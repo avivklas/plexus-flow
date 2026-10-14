@@ -19,18 +19,20 @@ type InventoryReservation struct {
 	Subtotal      float64   `json:"subtotal"`
 	Status        string    `json:"status"`
 	ReservedAt    time.Time `json:"reserved_at"`
+	SleepMs       *int      `json:"sleep_ms,omitempty"`
 }
 
 type OrderInput struct {
-	OrderID         string  `json:"order_id"`
-	CustomerID      string  `json:"customer_id"`
-	ItemSKU         string  `json:"item_sku"`
-	Quantity        int     `json:"quantity"`
-	UnitPrice       float64 `json:"unit_price"`
-	ShippingAddress string  `json:"shipping_address"`
-	SimulateFraud   bool    `json:"simulate_fraud,omitempty"`
-	SimulatePayFail bool    `json:"simulate_payment_fail,omitempty"`
-	SimulateShipFail bool   `json:"simulate_shipping_fail,omitempty"`
+	OrderID          string  `json:"order_id"`
+	CustomerID       string  `json:"customer_id"`
+	ItemSKU          string  `json:"item_sku"`
+	Quantity         int     `json:"quantity"`
+	UnitPrice        float64 `json:"unit_price"`
+	ShippingAddress  string  `json:"shipping_address"`
+	SimulateFraud    bool    `json:"simulate_fraud,omitempty"`
+	SimulatePayFail  bool    `json:"simulate_payment_fail,omitempty"`
+	SimulateShipFail bool    `json:"simulate_shipping_fail,omitempty"`
+	SleepMs          *int    `json:"sleep_ms,omitempty"`
 }
 
 func ReserveInventory(ctx context.Context, input json.RawMessage) (json.RawMessage, error) {
@@ -51,7 +53,7 @@ func ReserveInventory(ctx context.Context, input json.RawMessage) (json.RawMessa
 	task, _ := workerclient.TaskFromContext(ctx)
 	log.Printf("\033[34m[Go Inventory Service]\033[0m Task %s: Reserving %d x %s for Order %s...",
 		task.TaskID[:8], in.Quantity, in.ItemSKU, in.OrderID)
-	time.Sleep(120 * time.Millisecond)
+	Sleep(ctx, input, 120*time.Millisecond)
 
 	subtotal := float64(in.Quantity) * in.UnitPrice
 	resID := fmt.Sprintf("RES-%d", time.Now().UnixNano()%1000000)
@@ -65,6 +67,7 @@ func ReserveInventory(ctx context.Context, input json.RawMessage) (json.RawMessa
 		Subtotal:      subtotal,
 		Status:        "RESERVED",
 		ReservedAt:    time.Now().UTC(),
+		SleepMs:       in.SleepMs,
 	}
 
 	log.Printf("\033[32m[Go Inventory Service]\033[0m SUCCESS: Inventory reserved (Hold ID: %s, Subtotal: $%.2f)",
@@ -79,7 +82,7 @@ func ReleaseInventory(ctx context.Context, input json.RawMessage) (json.RawMessa
 	task, _ := workerclient.TaskFromContext(ctx)
 	log.Printf("\033[35m[Go Inventory Service - SAGA COMPENSATION]\033[0m Task %s: RELEASING inventory hold %s (SKU: %s, Qty: %d)...",
 		task.TaskID[:8], res.ReservationID, res.SKU, res.Quantity)
-	time.Sleep(80 * time.Millisecond)
+	Sleep(ctx, input, 80*time.Millisecond)
 
 	log.Printf("\033[32m[Go Inventory Service - SAGA COMPENSATION]\033[0m SUCCESS: Inventory restocked and released safely!",
 	)

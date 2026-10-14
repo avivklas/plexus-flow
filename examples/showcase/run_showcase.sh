@@ -38,10 +38,18 @@ cleanup() {
             kill "$pid" 2>/dev/null || true
         fi
     done
+    pkill -f "go-fulfillment-service" 2>/dev/null || true
+    pkill -f "python-ai-service" 2>/dev/null || true
     wait 2>/dev/null || true
     echo -e "${GREEN}[Teardown] Clean exit.${RESET}"
 }
 trap cleanup EXIT INT TERM
+
+# Kill any stale previous showcase processes
+pkill -f "plexus-flow.*8080" 2>/dev/null || true
+pkill -f "go-fulfillment-service" 2>/dev/null || true
+pkill -f "python-ai-service" 2>/dev/null || true
+sleep 0.3
 
 # 1. Build Plexus-Flow binary
 echo -e "${CYAN}[1/5] Building Plexus-Flow server binary...${RESET}"
@@ -109,14 +117,43 @@ echo -e "  3. Python Worker:  Evaluates AI Fraud Risk model in parallel with"
 echo -e "  4. Python Worker:  Enriching customer telemetry and tax matrix"
 echo -e "  5. Go Worker:      Dispatches courier shipment with generated airway bill"
 echo -e "  6. Python Worker:  Synthesizes order invoice and audit receipt"
-echo -e "${CYAN}========================================================================${RESET}"
+
+SLEEP_MS="100"
+BLOCK_MODE=true
+
+for ((i=1; i<=$#; i++)); do
+    arg="${!i}"
+    case "$arg" in
+        --no-block)
+            BLOCK_MODE=false
+            ;;
+        --sleep-ms)
+            j=$((i+1))
+            SLEEP_MS="${!j}"
+            i=$j
+            ;;
+        --sleep-ms=*)
+            SLEEP_MS="${arg#*=}"
+            ;;
+    esac
+done
+
+echo -e "Simulation Activity Sleep: ${BOLD}${SLEEP_MS}ms${RESET}"
+if [ "$SLEEP_MS" -eq 0 ] 2>/dev/null; then
+    echo -e "${YELLOW}(Fast execution: zero sleep across all activities)${RESET}"
+fi
+echo ""
+
+ORDER_HAPPY="ORD-HAPPY-$(date +%s)"
+ORDER_FRAUD="ORD-FRAUD-ROLLBACK-$(date +%s)"
 
 cd "${REPO_ROOT}"
 go run ./examples/showcase/go submit \
     --http-addr="http://${HTTP_ADDR}" \
-    --order-id="ORD-HAPPY-9001"
+    --order-id="${ORDER_HAPPY}" \
+    --sleep-ms="${SLEEP_MS}"
 
-sleep 1.5
+sleep 1.0
 
 # -----------------------------------------------------------------------------
 # DEMO 2: AI Fraud Detection -> Automatic Saga Rollback
@@ -136,15 +173,9 @@ echo -e "${CYAN}================================================================
 cd "${REPO_ROOT}/sdk/python"
 uv run python "${SHOWCASE_DIR}/python/launcher.py" \
     --http-addr="http://${HTTP_ADDR}" \
-    --order-id="ORD-FRAUD-ROLLBACK-9002" \
-    --simulate-fraud
-
-BLOCK_MODE=true
-for arg in "$@"; do
-    if [ "$arg" == "--no-block" ]; then
-        BLOCK_MODE=false
-    fi
-done
+    --order-id="${ORDER_FRAUD}" \
+    --simulate-fraud \
+    --sleep-ms="${SLEEP_MS}"
 
 echo -e "\n${GREEN}${BOLD}Showcase demo runs completed!${RESET}"
 echo -e "${PURPLE}Services remain active and running in background.${RESET}"

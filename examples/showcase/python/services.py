@@ -32,6 +32,26 @@ BOLD = "\033[1m"
 RESET = "\033[0m"
 
 
+def sleep_duration_s(ctx: TaskContext, payload: Any, default_s: float = 0.1) -> float:
+    """Get sleep duration in seconds from input or metadata. 0 means zero sleep."""
+    if isinstance(payload, dict) and "sleep_ms" in payload:
+        val = payload["sleep_ms"]
+        if val is not None:
+            return max(0.0, float(val) / 1000.0)
+    if ctx.metadata and "sleep_ms" in ctx.metadata:
+        try:
+            return max(0.0, float(ctx.metadata["sleep_ms"]) / 1000.0)
+        except (ValueError, TypeError):
+            pass
+    return default_s
+
+
+async def activity_sleep(ctx: TaskContext, payload: Any, default_s: float = 0.1) -> None:
+    d = sleep_duration_s(ctx, payload, default_s)
+    if d > 0:
+        await asyncio.sleep(d)
+
+
 def create_worker(grpc_addr: str, worker_id: str, domain: str) -> Worker:
     worker = Worker(grpc_addr, worker_id=worker_id, max_concurrency=8)
 
@@ -52,7 +72,7 @@ def create_worker(grpc_addr: str, worker_id: str, domain: str) -> Worker:
             f"{CYAN}[Python AI Risk Service]{RESET} Task {task_prefix}: "
             f"Evaluating ML fraud model for Order {order_id} (Customer: {customer_id}, Amount: ${auth_amount:.2f})..."
         )
-        await asyncio.sleep(0.18)
+        await activity_sleep(ctx, payload, default_s=0.18)
 
         # Trigger simulated permanent failure when requested
         if payload.get("simulate_fraud"):
@@ -86,7 +106,7 @@ def create_worker(grpc_addr: str, worker_id: str, domain: str) -> Worker:
             f"{CYAN}[Python Customer Intelligence]{RESET} Task {task_prefix}: "
             f"Looking up loyalty tier & tax matrix for Customer {customer_id}..."
         )
-        await asyncio.sleep(0.12)
+        await activity_sleep(ctx, payload, default_s=0.12)
 
         data = {
             "tier": "VIP_PLATINUM",
@@ -95,6 +115,7 @@ def create_worker(grpc_addr: str, worker_id: str, domain: str) -> Worker:
             "tax_rate": 0.0825,
             "carrier": "DHL Express Priority",
             "service_level": "Next-Day Air",
+            "sleep_ms": payload.get("sleep_ms"),
         }
         logger.info(
             f"{GREEN}[Python Customer Intelligence]{RESET} SUCCESS: "
@@ -113,7 +134,7 @@ def create_worker(grpc_addr: str, worker_id: str, domain: str) -> Worker:
             f"{CYAN}[Python Document & Invoice Service]{RESET} Task {task_prefix}: "
             f"Synthesizing audit receipt & packing slip for Order {order_id}..."
         )
-        await asyncio.sleep(0.10)
+        await activity_sleep(ctx, payload, default_s=0.10)
 
         receipt_id = f"RCPT-PY-{int(time.time() * 1000) % 1000000}"
         logger.info(
@@ -136,47 +157,47 @@ def create_worker(grpc_addr: str, worker_id: str, domain: str) -> Worker:
 
         @worker.activity("reserve-inventory")
         async def reserve_inventory(ctx: TaskContext, payload: dict[str, Any]) -> dict[str, Any]:
-            await asyncio.sleep(0.10)
+            await activity_sleep(ctx, payload, default_s=0.10)
             res_id = f"RES-PY-{int(time.time() * 1000) % 1000000}"
             sku = payload.get("item_sku", "QUANTUM-GPU-9000")
             qty = payload.get("quantity", 1)
             price = payload.get("unit_price", 1299.99)
             logger.info(f"{GREEN}[Python Inventory]{RESET} Reserved {qty}x {sku} (Hold: {res_id})")
-            return {"reservation_id": res_id, "sku": sku, "quantity": qty, "subtotal": qty * price}
+            return {"reservation_id": res_id, "sku": sku, "quantity": qty, "subtotal": qty * price, "sleep_ms": payload.get("sleep_ms")}
 
         @worker.activity("release-inventory")
         async def release_inventory(ctx: TaskContext, payload: dict[str, Any]) -> dict[str, Any]:
-            await asyncio.sleep(0.08)
+            await activity_sleep(ctx, payload, default_s=0.08)
             logger.info(f"{PURPLE}[Python Inventory - COMPENSATION]{RESET} Restocked inventory hold {payload}")
             return {"released": True, "restocked": True}
 
         @worker.activity("authorize-payment")
         async def authorize_payment(ctx: TaskContext, payload: dict[str, Any]) -> dict[str, Any]:
-            await asyncio.sleep(0.12)
+            await activity_sleep(ctx, payload, default_s=0.12)
             if payload.get("simulate_payment_fail"):
                 raise ActivityFailure("insufficient funds on credit card", code="CARD_DECLINED")
             tx_id = f"TX-AUTH-PY-{int(time.time() * 1000) % 1000000}"
             logger.info(f"{GREEN}[Python Payment]{RESET} Authorized transaction {tx_id}")
-            return {"transaction_id": tx_id, "status": "AUTHORIZED", "currency": "USD"}
+            return {"transaction_id": tx_id, "status": "AUTHORIZED", "currency": "USD", "sleep_ms": payload.get("sleep_ms")}
 
         @worker.activity("void-authorization")
         async def void_authorization(ctx: TaskContext, payload: dict[str, Any]) -> dict[str, Any]:
-            await asyncio.sleep(0.08)
+            await activity_sleep(ctx, payload, default_s=0.08)
             logger.info(f"{PURPLE}[Python Payment - COMPENSATION]{RESET} Voided authorization hold {payload}")
             return {"voided": True}
 
         @worker.activity("dispatch-shipment")
         async def dispatch_shipment(ctx: TaskContext, payload: dict[str, Any]) -> dict[str, Any]:
-            await asyncio.sleep(0.14)
+            await activity_sleep(ctx, payload, default_s=0.14)
             if payload.get("simulate_shipping_fail"):
                 raise ActivityFailure("courier warehouse unreachable", code="COURIER_UNAVAILABLE")
             tracking = f"TRK-PY-{int(time.time() * 1000) % 10000000}"
             logger.info(f"{GREEN}[Python Logistics]{RESET} Dispatched package {tracking}")
-            return {"tracking_number": tracking, "carrier": "DHL Express", "status": "DISPATCHED"}
+            return {"tracking_number": tracking, "carrier": "DHL Express", "status": "DISPATCHED", "sleep_ms": payload.get("sleep_ms")}
 
         @worker.activity("cancel-shipment")
         async def cancel_shipment(ctx: TaskContext, payload: dict[str, Any]) -> dict[str, Any]:
-            await asyncio.sleep(0.07)
+            await activity_sleep(ctx, payload, default_s=0.07)
             logger.info(f"{PURPLE}[Python Logistics - COMPENSATION]{RESET} Cancelled courier pickup {payload}")
             return {"cancelled": True}
 

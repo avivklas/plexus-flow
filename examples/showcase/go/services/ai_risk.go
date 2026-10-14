@@ -20,7 +20,7 @@ func EvaluateFraudRiskGo(ctx context.Context, input json.RawMessage) (json.RawMe
 
 	log.Printf("\033[36m[AI Risk & Fraud Service (Go)]\033[0m Task %s: Analyzing behavioral telemetry & fraud anomaly score for Order %s...",
 		task.TaskID[:8], in.OrderID)
-	time.Sleep(130 * time.Millisecond)
+	Sleep(ctx, input, 130*time.Millisecond)
 
 	if in.SimulateFraud {
 		log.Printf("\033[31m[AI Risk & Fraud Service (Go)]\033[0m PERMANENT FAILURE: High fraud probability detected (score=0.94, code=FRAUD_DETECTED)\033[0m")
@@ -46,7 +46,7 @@ func EnrichOrderTelemetryGo(ctx context.Context, input json.RawMessage) (json.Ra
 
 	log.Printf("\033[36m[Customer Intelligence (Go)]\033[0m Task %s: Enriching telemetry & loyalty tier for Customer %s...",
 		task.TaskID[:8], in.CustomerID)
-	time.Sleep(100 * time.Millisecond)
+	Sleep(ctx, input, 100*time.Millisecond)
 
 	data := TelemetryData{
 		Tier:         "VIP_PLATINUM",
@@ -74,7 +74,7 @@ func GenerateOrderReceiptGo(ctx context.Context, input json.RawMessage) (json.Ra
 
 	log.Printf("\033[36m[Notification & Document Service (Go)]\033[0m Task %s: Generating final order receipt & dispatch audit...",
 		task.TaskID[:8])
-	time.Sleep(90 * time.Millisecond)
+	Sleep(ctx, input, 90*time.Millisecond)
 
 	receiptID := fmt.Sprintf("RCPT-%d", time.Now().Unix()%1000000)
 	receipt := map[string]any{

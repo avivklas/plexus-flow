@@ -19,6 +19,7 @@ type PaymentAuthorization struct {
 	Status           string    `json:"status"`
 	AuthCode         string    `json:"auth_code"`
 	AuthorizedAt     time.Time `json:"authorized_at"`
+	SleepMs          *int      `json:"sleep_ms,omitempty"`
 }
 
 func AuthorizePayment(ctx context.Context, input json.RawMessage) (json.RawMessage, error) {
@@ -40,7 +41,7 @@ func AuthorizePayment(ctx context.Context, input json.RawMessage) (json.RawMessa
 
 	log.Printf("\033[34m[Go Payment Gateway]\033[0m Task %s: Pre-authorizing $%.2f USD for Order %s...",
 		task.TaskID[:8], amount, in.OrderID)
-	time.Sleep(140 * time.Millisecond)
+	Sleep(ctx, input, 140*time.Millisecond)
 
 	if in.SimulatePayFail {
 		log.Printf("\033[31m[Go Payment Gateway]\033[0m ERROR: Payment pre-authorization declined: insufficient funds\033[0m")
@@ -56,6 +57,7 @@ func AuthorizePayment(ctx context.Context, input json.RawMessage) (json.RawMessa
 		Status:           "AUTHORIZED",
 		AuthCode:         fmt.Sprintf("AUTH-%d", time.Now().Unix()%100000),
 		AuthorizedAt:     time.Now().UTC(),
+		SleepMs:          in.SleepMs,
 	}
 
 	log.Printf("\033[32m[Go Payment Gateway]\033[0m SUCCESS: Pre-authorization locked! (TxID: %s, AuthCode: %s)",
@@ -70,7 +72,7 @@ func VoidAuthorization(ctx context.Context, input json.RawMessage) (json.RawMess
 	task, _ := workerclient.TaskFromContext(ctx)
 	log.Printf("\033[35m[Go Payment Gateway - SAGA COMPENSATION]\033[0m Task %s: VOIDING authorization %s ($%.2f USD)...",
 		task.TaskID[:8], auth.TransactionID, auth.AuthorizedAmount)
-	time.Sleep(90 * time.Millisecond)
+	Sleep(ctx, input, 90*time.Millisecond)
 
 	log.Printf("\033[32m[Go Payment Gateway - SAGA COMPENSATION]\033[0m SUCCESS: Pre-authorization voided. Funds released back to customer card!",
 	)

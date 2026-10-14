@@ -19,6 +19,7 @@ type ShipmentDispatch struct {
 	EstimatedDelivery string    `json:"estimated_delivery"`
 	DispatchedAt      time.Time `json:"dispatched_at"`
 	Status            string    `json:"status"`
+	SleepMs           *int      `json:"sleep_ms,omitempty"`
 }
 
 type TelemetryData struct {
@@ -58,7 +59,7 @@ func DispatchShipment(ctx context.Context, input json.RawMessage) (json.RawMessa
 
 	log.Printf("\033[34m[Go Logistics & Shipping]\033[0m Task %s: Dispatching Order %s via %s (%s)...",
 		task.TaskID[:8], in.OrderID, carrier, serviceLevel)
-	time.Sleep(150 * time.Millisecond)
+	Sleep(ctx, input, 150*time.Millisecond)
 
 	if in.SimulateShipFail {
 		log.Printf("\033[31m[Go Logistics & Shipping]\033[0m ERROR: Courier API timeout: warehouse pickup unreachable\033[0m")
@@ -74,6 +75,7 @@ func DispatchShipment(ctx context.Context, input json.RawMessage) (json.RawMessa
 		EstimatedDelivery: time.Now().Add(24 * time.Hour).Format("2006-01-02 15:04 MST"),
 		DispatchedAt:      time.Now().UTC(),
 		Status:            "DISPATCHED",
+		SleepMs:           in.SleepMs,
 	}
 
 	log.Printf("\033[32m[Go Logistics & Shipping]\033[0m SUCCESS: Package dispatched! Tracking: %s", tracking)
@@ -87,7 +89,7 @@ func CancelShipment(ctx context.Context, input json.RawMessage) (json.RawMessage
 	task, _ := workerclient.TaskFromContext(ctx)
 	log.Printf("\033[35m[Go Logistics & Shipping - SAGA COMPENSATION]\033[0m Task %s: CANCELLING courier shipment %s (%s)...",
 		task.TaskID[:8], dispatch.TrackingNumber, dispatch.Carrier)
-	time.Sleep(70 * time.Millisecond)
+	Sleep(ctx, input, 70*time.Millisecond)
 
 	log.Printf("\033[32m[Go Logistics & Shipping - SAGA COMPENSATION]\033[0m SUCCESS: Courier pickup cancelled, airway bill voided!",
 	)
