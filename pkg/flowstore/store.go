@@ -96,6 +96,13 @@ func (s *Store) registerHandlers() {
 		if req.At.IsZero() {
 			now = time.Now().UTC()
 		}
+		// Dispatch is idempotent. Concurrent commits can each see the same step as
+		// ready; only the first may start it. A second dispatch would re-run an
+		// activity, or reopen a signal wait that already consumed its signal.
+		// Retries are unaffected: a retryable failure puts the step back to PENDING.
+		if wf.Status != flow.StatusRunning || step.Status != flow.StepStatusPending {
+			return nil, fmt.Errorf("%w: step %s is %s", ErrStepNotPending, req.StepName, step.Status)
+		}
 		step.Status = flow.StepStatusRunning
 		step.Attempt++
 		step.StartedAt = &now

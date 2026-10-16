@@ -156,13 +156,17 @@ func (c *Coordinator) transformWorkflowEvent(ctx context.Context, cmd *store.Com
 		for wf.Status == flow.StatusRunning {
 			resolvedInline := false
 			for _, step := range wf.NextReadySteps() {
-				// Mark step running on upstream state machine so subsequent concurrent commits do not re-dispatch it
-				_, _ = c.cfg.Upstream.Apply(ctx, flowstore.CmdDispatchStep, flowstore.DispatchStepRequest{
+				// Mark step running on upstream state machine so subsequent concurrent commits do not re-dispatch it.
+				// The store rejects a step that is no longer pending: another commit already
+				// dispatched it, so sending its task again would run it twice.
+				if _, err := c.cfg.Upstream.Apply(ctx, flowstore.CmdDispatchStep, flowstore.DispatchStepRequest{
 					WorkflowID: wf.WorkflowID,
 					RunID:      wf.RunID,
 					StepName:   step.Name,
 					At:         time.Now().UTC(),
-				})
+				}); err != nil {
+					continue
+				}
 
 				if !step.IsActivity() {
 					if _, status, ok := c.flowStore.StepState(wf.WorkflowID, step.Name); ok && status == flow.StepStatusCompleted {
