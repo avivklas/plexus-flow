@@ -3,6 +3,7 @@ package flowstore
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 
 	"github.com/avivklas/plexus-flow/pkg/flow"
@@ -144,5 +145,41 @@ func TestFailedCompensationIsTerminal(t *testing.T) {
 	}
 	if wf.Steps["a"].Status != flow.StepStatusCompensationFailed {
 		t.Fatalf("step a should be COMPENSATION_FAILED, got %s", wf.Steps["a"].Status)
+	}
+}
+
+// Concurrent commits can each see a step as ready; only the first dispatch may start it.
+func TestDispatchIsIdempotent(t *testing.T) {
+	st := New()
+	start(t, st, "wf", twoStepFlow())
+	dispatch(t, st, "wf", "a")
+
+	cmd, _ := store.NewCommand(CmdDispatchStep, DispatchStepRequest{WorkflowID: "wf", StepName: "a"})
+	if _, err := st.Router().Execute(context.Background(), cmd); !errors.Is(err, ErrStepNotPending) {
+		t.Fatalf("second dispatch: got err %v, want ErrStepNotPending", err)
+	}
+	wf, _ := st.GetWorkflow("wf")
+	if got := wf.Steps["a"].Attempt; got != 1 {
+		t.Fatalf("attempt = %d after duplicate dispatch, want 1", got)
+	}
+}
+
+// A duplicate dispatch must not reopen a signal wait that already consumed its buffered signal.
+func TestDuplicateDispatchDoesNotReopenSignalWait(t *testing.T) {
+	st := New()
+	def := flow.WorkflowDefinition{Name: "gate", Steps: []flow.StepDefinition{
+		{Name: "wait", Kind: flow.KindWaitSignal, Signal: "approval"},
+		{Name: "after", Activity: "act", DependsOn: []string{"wait"}},
+	}}
+	start(t, st, "wf", def)
+	exec(t, st, CmdSignalWorkflow, SignalWorkflowRequest{WorkflowID: "wf", SignalName: "approval", Payload: json.RawMessage(`{"ok":true}`)})
+	dispatch(t, st, "wf", "wait") // consumes the buffered signal and completes
+
+	cmd, _ := store.NewCommand(CmdDispatchStep, DispatchStepRequest{WorkflowID: "wf", StepName: "wait"})
+	_, _ = st.Router().Execute(context.Background(), cmd)
+
+	wf, _ := st.GetWorkflow("wf")
+	if s := wf.Steps["wait"]; s.Status != flow.StepStatusCompleted || s.Attempt != 1 {
+		t.Fatalf("wait step = %s (attempt %d), want COMPLETED (attempt 1)", s.Status, s.Attempt)
 	}
 }

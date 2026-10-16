@@ -2,11 +2,15 @@ package flowstore
 
 import (
 	"encoding/json"
+	"errors"
 	"time"
 
 	"github.com/avivklas/plexus-flow/pkg/flow"
 	"github.com/avivklas/plexus/pkg/store"
 )
+
+// ErrStepNotPending rejects dispatching a step that has already started or finished.
+var ErrStepNotPending = errors.New("step is not pending")
 
 // Flow Store Command Types
 const (
