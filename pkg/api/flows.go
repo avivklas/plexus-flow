@@ -70,6 +70,7 @@ func (s *Server) handleFlows(w http.ResponseWriter, r *http.Request) {
 
 // GET /api/v1/flows/{name}          -> flow graph
 // GET /api/v1/flows/{name}/traces   -> runs of the flow, newest first (?status=COMPLETED)
+// GET /api/v1/flows/{name}/watch    -> server-sent events for every change to a run (?terminal=1)
 func (s *Server) handleFlowByName(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
@@ -99,6 +100,8 @@ func (s *Server) handleFlowByName(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		writeJSON(w, http.StatusOK, flow.BuildGraph(def))
+	case "watch":
+		s.handleWatchFlow(w, r, name)
 	case "traces":
 		status := strings.ToUpper(r.URL.Query().Get("status"))
 		out := []flow.TraceSummary{}

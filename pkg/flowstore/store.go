@@ -20,6 +20,7 @@ type Store struct {
 	mu        sync.RWMutex
 	workflows map[string]*flow.WorkflowInstance
 	mutator   store.Mutator
+	watch     watchers
 }
 
 // New creates an initialized Flow Store.
@@ -55,7 +56,7 @@ func (s *Store) registerHandlers() {
 	r := s.Router()
 
 	// 1. Start Workflow
-	store.HandleTyped(r, CmdStartWorkflow, func(ctx context.Context, req StartWorkflowRequest) (*flow.WorkflowInstance, error) {
+	handle(s, r, CmdStartWorkflow, func(ctx context.Context, req StartWorkflowRequest) (*flow.WorkflowInstance, error) {
 		s.mu.Lock()
 		defer s.mu.Unlock()
 
@@ -78,7 +79,7 @@ func (s *Store) registerHandlers() {
 	})
 
 	// 2. Dispatch Step
-	store.HandleTyped(r, CmdDispatchStep, func(ctx context.Context, req DispatchStepRequest) (*flow.StepExecution, error) {
+	handle(s, r, CmdDispatchStep, func(ctx context.Context, req DispatchStepRequest) (*flow.StepExecution, error) {
 		s.mu.Lock()
 		defer s.mu.Unlock()
 
@@ -128,7 +129,7 @@ func (s *Store) registerHandlers() {
 	})
 
 	// 3. Complete Step
-	store.HandleTyped(r, CmdCompleteStep, func(ctx context.Context, req CompleteStepRequest) (*flow.WorkflowInstance, error) {
+	handle(s, r, CmdCompleteStep, func(ctx context.Context, req CompleteStepRequest) (*flow.WorkflowInstance, error) {
 		s.mu.Lock()
 		defer s.mu.Unlock()
 
@@ -157,7 +158,7 @@ func (s *Store) registerHandlers() {
 	})
 
 	// 4. Fail Step
-	store.HandleTyped(r, CmdFailStep, func(ctx context.Context, req FailStepRequest) (*flow.WorkflowInstance, error) {
+	handle(s, r, CmdFailStep, func(ctx context.Context, req FailStepRequest) (*flow.WorkflowInstance, error) {
 		s.mu.Lock()
 		defer s.mu.Unlock()
 
@@ -181,7 +182,7 @@ func (s *Store) registerHandlers() {
 	})
 
 	// 5. Trigger Compensation
-	store.HandleTyped(r, CmdTriggerCompensation, func(ctx context.Context, req TriggerCompensationRequest) (*flow.WorkflowInstance, error) {
+	handle(s, r, CmdTriggerCompensation, func(ctx context.Context, req TriggerCompensationRequest) (*flow.WorkflowInstance, error) {
 		s.mu.Lock()
 		defer s.mu.Unlock()
 
@@ -200,7 +201,7 @@ func (s *Store) registerHandlers() {
 	})
 
 	// 6. Start Compensation Step
-	store.HandleTyped(r, CmdStartCompensationStep, func(ctx context.Context, req StartCompensationStepRequest) (*flow.StepExecution, error) {
+	handle(s, r, CmdStartCompensationStep, func(ctx context.Context, req StartCompensationStepRequest) (*flow.StepExecution, error) {
 		s.mu.Lock()
 		defer s.mu.Unlock()
 
@@ -223,7 +224,7 @@ func (s *Store) registerHandlers() {
 	})
 
 	// 7. Complete Compensation Step
-	store.HandleTyped(r, CmdCompleteCompensationStep, func(ctx context.Context, req CompleteCompensationStepRequest) (*flow.WorkflowInstance, error) {
+	handle(s, r, CmdCompleteCompensationStep, func(ctx context.Context, req CompleteCompensationStepRequest) (*flow.WorkflowInstance, error) {
 		s.mu.Lock()
 		defer s.mu.Unlock()
 
@@ -258,7 +259,7 @@ func (s *Store) registerHandlers() {
 	})
 
 	// 8. Fail Compensation Step
-	store.HandleTyped(r, CmdFailCompensationStep, func(ctx context.Context, req FailCompensationStepRequest) (*flow.WorkflowInstance, error) {
+	handle(s, r, CmdFailCompensationStep, func(ctx context.Context, req FailCompensationStepRequest) (*flow.WorkflowInstance, error) {
 		s.mu.Lock()
 		defer s.mu.Unlock()
 
@@ -291,7 +292,7 @@ func (s *Store) registerHandlers() {
 	})
 
 	// 9. Complete Workflow
-	store.HandleTyped(r, CmdCompleteWorkflow, func(ctx context.Context, req CompleteWorkflowRequest) (*flow.WorkflowInstance, error) {
+	handle(s, r, CmdCompleteWorkflow, func(ctx context.Context, req CompleteWorkflowRequest) (*flow.WorkflowInstance, error) {
 		s.mu.Lock()
 		defer s.mu.Unlock()
 
@@ -311,7 +312,7 @@ func (s *Store) registerHandlers() {
 	})
 
 	// 10. Cancel Workflow
-	store.HandleTyped(r, CmdCancelWorkflow, func(ctx context.Context, req CancelWorkflowRequest) (*flow.WorkflowInstance, error) {
+	handle(s, r, CmdCancelWorkflow, func(ctx context.Context, req CancelWorkflowRequest) (*flow.WorkflowInstance, error) {
 		s.mu.Lock()
 		defer s.mu.Unlock()
 
@@ -349,7 +350,7 @@ func (s *Store) registerHandlers() {
 	})
 
 	// 11. Signal Workflow
-	store.HandleTyped(r, CmdSignalWorkflow, func(ctx context.Context, req SignalWorkflowRequest) (*flow.WorkflowInstance, error) {
+	handle(s, r, CmdSignalWorkflow, func(ctx context.Context, req SignalWorkflowRequest) (*flow.WorkflowInstance, error) {
 		s.mu.Lock()
 		defer s.mu.Unlock()
 
@@ -388,7 +389,7 @@ func (s *Store) registerHandlers() {
 	})
 
 	// 12. Fire Timer
-	store.HandleTyped(r, CmdFireTimer, func(ctx context.Context, req FireTimerRequest) (*flow.WorkflowInstance, error) {
+	handle(s, r, CmdFireTimer, func(ctx context.Context, req FireTimerRequest) (*flow.WorkflowInstance, error) {
 		s.mu.Lock()
 		defer s.mu.Unlock()
 

@@ -262,13 +262,14 @@ type TraceSummary struct {
 	StartedAt  time.Time  `json:"started_at"`
 	EndedAt    *time.Time `json:"ended_at,omitempty"`
 	DurationMS int64      `json:"duration_ms"`
+	Version    uint64     `json:"version"`
 }
 
 // Summary returns the list-row form of the instance.
 func (w *WorkflowInstance) Summary() TraceSummary {
 	return TraceSummary{
 		WorkflowID: w.WorkflowID, Flow: w.DefinitionName, Status: w.Status,
-		StartedAt: w.CreatedAt, EndedAt: w.CompletedAt, DurationMS: w.durationMS(),
+		StartedAt: w.CreatedAt, EndedAt: w.CompletedAt, DurationMS: w.durationMS(), Version: w.Version,
 	}
 }
 

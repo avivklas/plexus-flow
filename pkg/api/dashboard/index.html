@@ -269,13 +269,17 @@
     sel.value = state.flow ?? '';
     if (!state.flow) { $('canvas').querySelector('svg')?.remove(); $('drawer').innerHTML = '<span class="hint">No flows registered yet</span>'; return; }
     state.graph = await api('/flows/' + encodeURIComponent(state.flow));
-    render(); drawer();
+    render(); drawer(); watchFlow();
   }
 
   async function loadTraces() {
     if (!state.flow) return;
     const q = state.filter ? '?status=' + state.filter : '';
     state.traces = await api('/flows/' + encodeURIComponent(state.flow) + '/traces' + q);
+    traceList();
+  }
+
+  function traceList() {
     const list = $('tracelist'); list.textContent = '';
     if (!state.traces.length) { const e = document.createElement('div'); e.className = 'empty'; e.textContent = 'No traces'; list.appendChild(e); }
     state.traces.forEach(t => {
@@ -317,14 +321,30 @@
   $('tab-traces').onclick = () => setMode('traces');
   $('flowsel').onchange = async e => { state.flow = e.target.value; state.trace = null; state.traceId = null; state.node = null; await loadFlows(); if (state.mode === 'traces') setMode('traces'); };
 
-  // Live refresh: keep the trace list and an in-flight trace current.
-  setInterval(async () => {
-    if (state.mode !== 'traces') return;
-    loadTraces();
-    if (state.traceId && state.trace && !['COMPLETED', 'COMPENSATED', 'FAILED', 'CANCELLED'].includes(state.trace.status)) {
-      state.trace = await api('/traces/' + encodeURIComponent(state.traceId)); render(); timeline();
-    }
-  }, 2000);
+  // Live updates: the server pushes a summary whenever a run of this flow changes.
+  // The trace list is updated in place from the summary; only the open trace is re-fetched.
+  let stream = null, listQueued = false, traceTimer = null;
+  function watchFlow() {
+    if (stream) stream.close();
+    if (!state.flow) return;
+    stream = new EventSource('/api/v1/flows/' + encodeURIComponent(state.flow) + '/watch');
+    stream.onopen = () => { if (state.mode === 'traces') loadTraces(); }; // resync after a reconnect
+    stream.addEventListener('trace', e => {
+      const t = JSON.parse(e.data);
+      const i = state.traces.findIndex(x => x.workflow_id === t.workflow_id);
+      const keep = !state.filter || t.status === state.filter;
+      if (i >= 0) { if (keep) state.traces[i] = t; else state.traces.splice(i, 1); }
+      else if (keep) { state.traces.unshift(t); }
+      if (state.mode !== 'traces') return;
+      if (!listQueued) { listQueued = true; requestAnimationFrame(() => { listQueued = false; traceList(); }); }
+      if (t.workflow_id === state.traceId && !traceTimer) {
+        traceTimer = setTimeout(async () => { // coalesce bursts of changes to the open trace
+          traceTimer = null;
+          state.trace = await api('/traces/' + encodeURIComponent(state.traceId)); render(); timeline();
+        }, 150);
+      }
+    });
+  }
 
   filters();
   loadFlows().then(() => { if (location.hash === '#traces') setMode('traces'); });
