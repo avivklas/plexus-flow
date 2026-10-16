@@ -28,4 +28,22 @@ asyncio.run(worker.run())
   `asyncio.CancelledError` (or just let it propagate).
 * Sync functions are supported and run in a thread (they cannot be cancelled mid-flight).
 
+## Watching workflows
+
+Clients don't need to poll. The server pushes every change over server-sent events, and these helpers read them using only the standard library:
+
+```python
+from plexus_flow import wait_for, watch_flow, watch_workflow
+
+for wf in watch_workflow("http://127.0.0.1:8080", "order-42"):
+    print(wf["version"], wf["status"])          # current state, then each change until terminal
+
+final = wait_for("http://127.0.0.1:8080", "order-42")
+
+for run in watch_flow("http://127.0.0.1:8080", "order-saga", terminal_only=True):
+    print(run["workflow_id"], run["status"], run["duration_ms"])
+```
+
+A dropped connection is resumed, and changes already seen are not repeated (each change carries a `version`).
+
 The protocol is `pkg/remote/workerpb/worker.proto`; `scripts/generate_proto.sh` regenerates the stubs.

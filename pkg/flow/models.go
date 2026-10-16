@@ -137,6 +137,9 @@ type WorkflowInstance struct {
 	UpdatedAt   time.Time                    `json:"updated_at"`
 	CompletedAt *time.Time                   `json:"completed_at,omitempty"`
 	Metadata    map[string]string            `json:"metadata,omitempty"`
+	// Version increases by one with every change to the instance. It is
+	// identical on every replica, so watchers can skip changes they have seen.
+	Version uint64 `json:"version"`
 }
 
 // NewWorkflowInstance creates a new initialized workflow instance from a definition.

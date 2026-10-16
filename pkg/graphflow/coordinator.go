@@ -353,6 +353,16 @@ func (c *Coordinator) ListWorkflows() []*flow.WorkflowInstance {
 	return c.flowStore.ListWorkflows()
 }
 
+// Watch subscribes to changes of the workflows match accepts; see flowstore.Store.Watch.
+func (c *Coordinator) Watch(match func(*flow.WorkflowInstance) bool, buffer int) (<-chan *flow.WorkflowInstance, func()) {
+	return c.flowStore.Watch(match, buffer)
+}
+
+// WatchSummaries subscribes to summaries of changes; see flowstore.Store.WatchSummaries.
+func (c *Coordinator) WatchSummaries(match func(*flow.WorkflowInstance) bool, buffer int) (<-chan flow.TraceSummary, func()) {
+	return c.flowStore.WatchSummaries(match, buffer)
+}
+
 // SignalWorkflow sends an external signal to a workflow.
 func (c *Coordinator) SignalWorkflow(ctx context.Context, workflowID, signalName string, payload json.RawMessage) error {
 	_, err := c.cfg.Upstream.Apply(ctx, flowstore.CmdSignalWorkflow, flowstore.SignalWorkflowRequest{

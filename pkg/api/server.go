@@ -169,6 +169,14 @@ func (s *Server) handleWorkflowByID(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusOK, map[string]string{"status": "cancelling"})
 			return
 
+		case "watch":
+			if r.Method != http.MethodGet {
+				writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
+				return
+			}
+			s.handleWatchWorkflow(w, r, wfID)
+			return
+
 		case "history":
 			if r.Method != http.MethodGet {
 				writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")

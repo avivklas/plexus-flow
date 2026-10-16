@@ -228,6 +228,22 @@ The same graph with one run overlaid: the path taken is highlighted and numbered
 | `GET /api/v1/flows/{name}` | The flow graph: nodes plus `success`, `failure` and `compensation` edges |
 | `GET /api/v1/flows/{name}/traces?status=` | Runs of the flow, newest first |
 | `GET /api/v1/traces/{workflowID}` | One run overlaid on its graph: path, edges taken, per-node duration, attempts, error, input/output |
+| `GET /api/v1/workflows/{id}/watch` | Server-sent events: the workflow's current state, then every change, until it reaches a terminal status |
+| `GET /api/v1/flows/{name}/watch?terminal=1` | Server-sent events: a summary of every change to any run of the flow (only terminal ones with `terminal=1`) |
+
+### Watching instead of polling
+
+Workers already receive their tasks over a long-lived gRPC stream. Clients get the same push model through the watch endpoints above. Every change to a workflow bumps its `version`, which is identical on every replica, and is pushed to matching watchers as it is applied. A watcher that falls too far behind is disconnected rather than allowed to slow the state machine; it reconnects and reads the current state. The dashboard uses these streams for live updates.
+
+```go
+final, err := client.WaitWorkflow(ctx, "order-42")             // blocks until terminal
+err = client.WatchWorkflow(ctx, "order-42", func(wf *flow.WorkflowInstance) error { ...; return nil })
+```
+
+```python
+from plexus_flow import wait_for, watch_workflow    # Python SDK, standard library only
+final = wait_for("http://127.0.0.1:8080", "order-42")
+```
 
 Failure and rollback edges are derived from step dependencies and compensating actions, so there is nothing extra to declare. Starting a workflow registers its flow. To make a flow visible before its first run, call `coord.RegisterFlow(def)`.
 
