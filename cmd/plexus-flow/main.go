@@ -34,17 +34,20 @@ const (
 
 func main() {
 	var (
-		nodeID          = flag.String("id", "node-1", "Unique node identifier in cluster")
-		httpAddr        = flag.String("http-addr", "127.0.0.1:8080", "HTTP REST API listen address")
-		grpcAddr        = flag.String("grpc-addr", "127.0.0.1:9090", "gRPC address for remote activity workers (empty disables)")
-		raftAddr        = flag.String("raft-addr", "127.0.0.1:9000", "Raft consensus listen address for workflow state")
-		actRaftAddr     = flag.String("act-raft-addr", "", "Raft consensus listen address for activity dispatcher (default: raft-addr + 1)")
-		dataDir         = flag.String("data-dir", "./data", "Directory for persistent Raft logs and dedup records")
-		joinAddrs       = flag.String("join", "", "Comma-separated list of peer Raft addresses to join")
-		bootstrap       = flag.Bool("bootstrap", false, "Bootstrap this node as the initial cluster leader")
-		runExample      = flag.Bool("run-example", false, "Run the built-in Order Processing Saga demonstration")
-		simulateFailure = flag.Bool("simulate-failure", false, "Simulate a step failure to demonstrate automatic Saga rollback")
-		failStep        = flag.String("fail-step", "charge-card", "Which step to fail when simulating: 'charge-card' or 'ship-item'")
+		nodeID                = flag.String("id", "node-1", "Unique node identifier in cluster")
+		httpAddr              = flag.String("http-addr", "127.0.0.1:8080", "HTTP REST API listen address")
+		grpcAddr              = flag.String("grpc-addr", "127.0.0.1:9090", "gRPC address for remote activity workers (empty disables)")
+		raftAddr              = flag.String("raft-addr", "127.0.0.1:9000", "Raft consensus listen address for workflow state")
+		actRaftAddr           = flag.String("act-raft-addr", "", "Raft consensus listen address for activity dispatcher (default: raft-addr + 1)")
+		dataDir               = flag.String("data-dir", "./data", "Directory for persistent Raft logs and dedup records")
+		joinAddrs             = flag.String("join", "", "Comma-separated list of peer Raft addresses to join")
+		bootstrap             = flag.Bool("bootstrap", false, "Bootstrap this node as the initial cluster leader")
+		timerInterval         = flag.Duration("timer-interval", 100*time.Millisecond, "How often sleep, signal-wait, and retry-backoff timers are checked")
+		retentionTTL          = flag.Duration("retention-ttl", 0, "Evict terminal workflows older than this duration to cold archive (0 disables)")
+		maxCompletedWorkflows = flag.Int("max-completed-workflows", 0, "Cap hot terminal workflows in memory before compacting to cold archive (0 disables)")
+		runExample            = flag.Bool("run-example", false, "Run the built-in Order Processing Saga demonstration")
+		simulateFailure       = flag.Bool("simulate-failure", false, "Simulate a step failure to demonstrate automatic Saga rollback")
+		failStep              = flag.String("fail-step", "charge-card", "Which step to fail when simulating: 'charge-card' or 'ship-item'")
 	)
 	flag.Parse()
 
@@ -63,15 +66,18 @@ func main() {
 
 	log.Printf("%s[Consensus]%s Starting node %s and waiting for Raft leadership...", colorBlue, colorReset, *nodeID)
 	srv, err := server.Start(ctx, server.Options{
-		NodeID:      *nodeID,
-		HTTPAddr:    *httpAddr,
-		GRPCAddr:    *grpcAddr,
-		RaftAddr:    *raftAddr,
-		ActRaftAddr: *actRaftAddr,
-		DataDir:     *dataDir,
-		Join:        join,
-		Bootstrap:   *bootstrap,
-		Registry:    registry,
+		NodeID:                *nodeID,
+		HTTPAddr:              *httpAddr,
+		GRPCAddr:              *grpcAddr,
+		RaftAddr:              *raftAddr,
+		ActRaftAddr:           *actRaftAddr,
+		DataDir:               *dataDir,
+		Join:                  join,
+		Bootstrap:             *bootstrap,
+		Registry:              registry,
+		TimerInterval:         *timerInterval,
+		RetentionTTL:          *retentionTTL,
+		MaxCompletedWorkflows: *maxCompletedWorkflows,
 	})
 	if err != nil {
 		log.Fatalf("failed to start plexus-flow: %v", err)
