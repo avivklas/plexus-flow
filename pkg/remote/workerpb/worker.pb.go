@@ -373,7 +373,10 @@ func (x *Registered) GetHeartbeatIntervalMs() int64 {
 }
 
 type Heartbeat struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Optional task_id and progress checkpoint for a long-running activity.
+	TaskId        string `protobuf:"bytes,1,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"`
+	Progress      []byte `protobuf:"bytes,2,opt,name=progress,proto3" json:"progress,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -408,6 +411,20 @@ func (*Heartbeat) Descriptor() ([]byte, []int) {
 	return file_worker_proto_rawDescGZIP(), []int{4}
 }
 
+func (x *Heartbeat) GetTaskId() string {
+	if x != nil {
+		return x.TaskId
+	}
+	return ""
+}
+
+func (x *Heartbeat) GetProgress() []byte {
+	if x != nil {
+		return x.Progress
+	}
+	return nil
+}
+
 type Task struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Identifies this delivery; echo it in TaskResult.
@@ -424,7 +441,9 @@ type Task struct {
 	// 1-based attempt number of the step.
 	Attempt int32 `protobuf:"varint,10,opt,name=attempt,proto3" json:"attempt,omitempty"`
 	// The task is cancelled by the server when this elapses; zero means no limit.
-	TimeoutMs     int64 `protobuf:"varint,11,opt,name=timeout_ms,json=timeoutMs,proto3" json:"timeout_ms,omitempty"`
+	TimeoutMs int64 `protobuf:"varint,11,opt,name=timeout_ms,json=timeoutMs,proto3" json:"timeout_ms,omitempty"`
+	// Last checkpointed progress from a previous attempt of this step, if any.
+	LastProgress  []byte `protobuf:"bytes,12,opt,name=last_progress,json=lastProgress,proto3" json:"last_progress,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -534,6 +553,13 @@ func (x *Task) GetTimeoutMs() int64 {
 		return x.TimeoutMs
 	}
 	return 0
+}
+
+func (x *Task) GetLastProgress() []byte {
+	if x != nil {
+		return x.LastProgress
+	}
+	return nil
 }
 
 type CancelTask struct {
@@ -810,8 +836,10 @@ const file_worker_proto_rawDesc = "" +
 	"\x0fmax_concurrency\x18\x03 \x01(\x05R\x0emaxConcurrency\"@\n" +
 	"\n" +
 	"Registered\x122\n" +
-	"\x15heartbeat_interval_ms\x18\x01 \x01(\x03R\x13heartbeatIntervalMs\"\v\n" +
-	"\tHeartbeat\"\xbe\x04\n" +
+	"\x15heartbeat_interval_ms\x18\x01 \x01(\x03R\x13heartbeatIntervalMs\"@\n" +
+	"\tHeartbeat\x12\x17\n" +
+	"\atask_id\x18\x01 \x01(\tR\x06taskId\x12\x1a\n" +
+	"\bprogress\x18\x02 \x01(\fR\bprogress\"\xe3\x04\n" +
 	"\x04Task\x12\x17\n" +
 	"\atask_id\x18\x01 \x01(\tR\x06taskId\x122\n" +
 	"\x04kind\x18\x02 \x01(\x0e2\x1e.plexusflow.worker.v1.TaskKindR\x04kind\x12\x1f\n" +
@@ -826,7 +854,8 @@ const file_worker_proto_rawDesc = "" +
 	"\aattempt\x18\n" +
 	" \x01(\x05R\aattempt\x12\x1d\n" +
 	"\n" +
-	"timeout_ms\x18\v \x01(\x03R\ttimeoutMs\x1aD\n" +
+	"timeout_ms\x18\v \x01(\x03R\ttimeoutMs\x12#\n" +
+	"\rlast_progress\x18\f \x01(\fR\flastProgress\x1aD\n" +
 	"\x16DependencyOutputsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\fR\x05value:\x028\x01\x1a;\n" +

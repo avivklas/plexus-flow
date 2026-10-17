@@ -45,7 +45,11 @@ message Registered {
   int64 heartbeat_interval_ms = 1;
 }
 
-message Heartbeat {}
+message Heartbeat {
+  // Optional task_id and progress checkpoint for a long-running activity.
+  string task_id = 1;
+  bytes progress = 2;
+}
 
 enum TaskKind {
   TASK_KIND_ACTIVITY = 0;
@@ -69,6 +73,8 @@ message Task {
   int32 attempt = 10;
   // The task is cancelled by the server when this elapses; zero means no limit.
   int64 timeout_ms = 11;
+  // Last checkpointed progress from a previous attempt of this step, if any.
+  bytes last_progress = 12;
 }
 
 message CancelTask {

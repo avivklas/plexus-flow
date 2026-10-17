@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/avivklas/plexus-flow/pkg/flow"
 	"github.com/avivklas/plexus-flow/pkg/flowstore"
 	"github.com/avivklas/plexus/pkg/store"
 )
@@ -72,7 +73,7 @@ func (e *Executor) ExecuteActivity(task ActivityTask) {
 		taskCtx, cancel := context.WithTimeout(e.ctx, timeout)
 		defer cancel()
 
-		output, lastErr := e.runWithRetries(taskCtx, task.Activity, task.Input, task.Retries)
+		output, lastErr := e.runWithRetries(taskCtx, task.Activity, task.Input, task.Retries, task.RetryPolicy)
 
 		e.mu.RLock()
 		applier := e.applier
@@ -126,7 +127,7 @@ func (e *Executor) ExecuteCompensation(task CompensationTask) {
 		taskCtx, cancel := context.WithTimeout(e.ctx, timeout)
 		defer cancel()
 
-		output, lastErr := e.runWithRetries(taskCtx, task.Activity, task.Input, task.Retries)
+		output, lastErr := e.runWithRetries(taskCtx, task.Activity, task.Input, task.Retries, task.RetryPolicy)
 
 		e.mu.RLock()
 		applier := e.applier
@@ -165,9 +166,9 @@ func (e *Executor) ExecuteCompensation(task CompensationTask) {
 	}()
 }
 
-// runWithRetries calls the activity up to retries+1 times with a small linear
-// backoff. A NonRetryable error ends the attempts at once.
-func (e *Executor) runWithRetries(ctx context.Context, activity string, input json.RawMessage, retries int) (json.RawMessage, error) {
+// runWithRetries calls the activity up to retries+1 times with configurable RetryPolicy backoff.
+// A NonRetryable error or non-retryable error code ends the attempts at once.
+func (e *Executor) runWithRetries(ctx context.Context, activity string, input json.RawMessage, retries int, policy *flow.RetryPolicy) (json.RawMessage, error) {
 	fn, ok := e.registry.Get(activity)
 	if !ok {
 		return nil, fmt.Errorf("activity function %q not registered", activity)
@@ -182,11 +183,15 @@ func (e *Executor) runWithRetries(ctx context.Context, activity string, input js
 			return out, nil
 		}
 		lastErr = err
-		if IsNonRetryable(err) || attempt == retries+1 {
+		if IsNonRetryable(err) || policy.IsNonRetryableCode(CodeOf(err)) || attempt == retries+1 {
 			break
 		}
+		delay := time.Duration(attempt*15) * time.Millisecond
+		if d := policy.NextDelay(attempt); d > 0 {
+			delay = d
+		}
 		select {
-		case <-time.After(time.Duration(attempt*15) * time.Millisecond):
+		case <-time.After(delay):
 		case <-ctx.Done():
 			return nil, ctx.Err()
 		}

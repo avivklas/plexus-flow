@@ -52,6 +52,10 @@ type Options struct {
 	// TimerInterval is how often sleep and signal-wait timers are checked
 	// (default 100ms).
 	TimerInterval time.Duration
+	// RetentionTTL evicts terminal workflows older than this duration to cold archive when > 0.
+	RetentionTTL time.Duration
+	// MaxCompletedWorkflows caps hot terminal workflows in memory when > 0.
+	MaxCompletedWorkflows int
 	// RegisterHTTP mounts extra routes on the REST API before it starts.
 	RegisterHTTP func(handle func(pattern string, h http.Handler), s *Server) error
 	// RegisterGRPC adds services to the worker gRPC server before it starts.
@@ -105,6 +109,9 @@ func Start(ctx context.Context, opts Options) (*Server, error) {
 		registry = worker.NewRegistry()
 	}
 	flowStore := flowstore.New()
+	if arch, err := flowstore.NewFileArchiver(filepath.Join(opts.DataDir, "archive")); err == nil {
+		flowStore.SetArchiver(arch)
+	}
 	actStore := worker.NewActivityStore()
 	s.FlowStore = flowStore
 
@@ -139,14 +146,16 @@ func Start(ctx context.Context, opts Options) (*Server, error) {
 	}
 
 	coord, err := graphflow.NewCoordinator(graphflow.Config{
-		GraphName:     "plexus-flow-" + opts.NodeID,
-		Upstream:      up,
-		Downstream:    down,
-		FlowStore:     flowStore,
-		ActivityStore: actStore,
-		DedupStore:    dedupStore,
-		Registry:      registry,
-		TimerInterval: opts.TimerInterval,
+		GraphName:             "plexus-flow-" + opts.NodeID,
+		Upstream:              up,
+		Downstream:            down,
+		FlowStore:             flowStore,
+		ActivityStore:         actStore,
+		DedupStore:            dedupStore,
+		Registry:              registry,
+		TimerInterval:         opts.TimerInterval,
+		RetentionTTL:          opts.RetentionTTL,
+		MaxCompletedWorkflows: opts.MaxCompletedWorkflows,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("create coordinator: %w", err)
