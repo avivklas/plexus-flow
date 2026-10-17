@@ -67,20 +67,31 @@ type FileArchiver struct {
 
 // NewFileArchiver creates a directory-backed cold workflow archiver.
 func NewFileArchiver(dir string) (*FileArchiver, error) {
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	absDir, err := filepath.Abs(dir)
+	if err != nil {
+		return nil, fmt.Errorf("resolve archive dir: %w", err)
+	}
+	if err := os.MkdirAll(absDir, 0o755); err != nil {
 		return nil, fmt.Errorf("create archive dir: %w", err)
 	}
-	return &FileArchiver{dir: dir}, nil
+	return &FileArchiver{dir: absDir}, nil
 }
 
-func (a *FileArchiver) pathFor(workflowID string) string {
+func (a *FileArchiver) pathFor(workflowID string) (string, bool) {
+	if workflowID == "" || strings.Contains(workflowID, "/") || strings.Contains(workflowID, "\\") || strings.Contains(workflowID, "..") {
+		return "", false
+	}
 	safe := strings.Map(func(r rune) rune {
 		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-' || r == '_' {
 			return r
 		}
 		return '_'
 	}, workflowID)
-	return filepath.Join(a.dir, safe+".json")
+	absPath, err := filepath.Abs(filepath.Join(a.dir, safe+".json"))
+	if err != nil || !strings.HasPrefix(absPath, a.dir+string(filepath.Separator)) {
+		return "", false
+	}
+	return absPath, true
 }
 
 func (a *FileArchiver) ArchiveWorkflows(workflows []*flow.WorkflowInstance) error {
@@ -90,11 +101,14 @@ func (a *FileArchiver) ArchiveWorkflows(workflows []*flow.WorkflowInstance) erro
 		if wf == nil {
 			continue
 		}
+		p, ok := a.pathFor(wf.WorkflowID)
+		if !ok {
+			return fmt.Errorf("invalid workflow ID for archive: %q", wf.WorkflowID)
+		}
 		data, err := json.Marshal(wf)
 		if err != nil {
 			return err
 		}
-		p := a.pathFor(wf.WorkflowID)
 		tmp := p + ".tmp"
 		if err := os.WriteFile(tmp, data, 0o644); err != nil {
 			return err
@@ -107,9 +121,16 @@ func (a *FileArchiver) ArchiveWorkflows(workflows []*flow.WorkflowInstance) erro
 }
 
 func (a *FileArchiver) LoadWorkflow(workflowID string) (*flow.WorkflowInstance, bool, error) {
+	if workflowID == "" || strings.Contains(workflowID, "/") || strings.Contains(workflowID, "\\") || strings.Contains(workflowID, "..") {
+		return nil, false, nil
+	}
 	a.mu.RLock()
 	defer a.mu.RUnlock()
-	data, err := os.ReadFile(a.pathFor(workflowID))
+	p, ok := a.pathFor(workflowID)
+	if !ok {
+		return nil, false, nil
+	}
+	data, err := os.ReadFile(p)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, false, nil
