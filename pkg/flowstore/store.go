@@ -454,7 +454,7 @@ func (s *Store) registerHandlers() {
 	})
 
 	// 13. Fire Batched Timers
-	store.HandleTyped(r, CmdFireTimers, func(ctx context.Context, req FireTimersRequest) ([]string, error) {
+	store.HandleTyped(r, CmdFireTimers, func(ctx context.Context, req FireTimersRequest) ([]*flow.WorkflowInstance, error) {
 		s.mu.Lock()
 		defer s.mu.Unlock()
 
@@ -481,13 +481,15 @@ func (s *Store) registerHandlers() {
 				}
 			}
 		}
+		out := make([]*flow.WorkflowInstance, 0, len(changedIDs))
 		for _, id := range changedIDs {
 			if wf, ok := s.workflows[id]; ok {
 				wf.Version++
 				s.publishLocked(wf)
+				out = append(out, wf.Clone())
 			}
 		}
-		return changedIDs, nil
+		return out, nil
 	})
 
 	// 14. Update Step Progress (Heartbeat Checkpointing)

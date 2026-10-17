@@ -172,10 +172,10 @@ class Worker:
             outbox.put_nowait(pb.WorkerMessage(heartbeat=pb.Heartbeat()))
 
     async def _run_task(self, task: pb.Task, outbox: Outbox) -> None:
-        result = await self._execute(task)
+        result = await self._execute(task, outbox)
         outbox.put_nowait(pb.WorkerMessage(result=result))
 
-    async def _execute(self, task: pb.Task) -> pb.TaskResult:
+    async def _execute(self, task: pb.Task, outbox: Outbox | None = None) -> pb.TaskResult:
         """Run one task; a cancelled task raises CancelledError and reports nothing."""
 
         def failure(code: str, message: str, retryable: bool) -> pb.TaskResult:
@@ -190,7 +190,7 @@ class Worker:
             return failure(_CODE_NOT_REGISTERED, msg, False)
 
         try:
-            ctx = _context_of(task)
+            ctx = _context_of(task, outbox)
             payload = _loads(task.input)
             async with asyncio.timeout(ctx.timeout_s):
                 output = await _invoke(handler, ctx, payload)
@@ -227,7 +227,18 @@ def _loads(raw: bytes) -> Any:
     return json.loads(raw) if raw else None
 
 
-def _context_of(task: pb.Task) -> TaskContext:
+def _context_of(task: pb.Task, outbox: Outbox | None = None) -> TaskContext:
+    def report(progress: Any) -> None:
+        if outbox is not None:
+            outbox.put_nowait(
+                pb.WorkerMessage(
+                    heartbeat=pb.Heartbeat(
+                        task_id=task.task_id,
+                        progress=json.dumps(progress).encode(),
+                    )
+                )
+            )
+
     return TaskContext(
         task_id=task.task_id,
         workflow_id=task.workflow_id,
@@ -237,6 +248,8 @@ def _context_of(task: pb.Task) -> TaskContext:
         compensation=task.kind == pb.TASK_KIND_COMPENSATION,
         attempt=task.attempt,
         timeout_s=task.timeout_ms / 1000 if task.timeout_ms > 0 else None,
+        last_progress=_loads(task.last_progress),
         dependency_outputs={name: _loads(raw) for name, raw in task.dependency_outputs.items()},
         metadata=dict(task.metadata),
+        _report_progress=report,
     )

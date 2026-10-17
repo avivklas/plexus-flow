@@ -148,6 +148,13 @@ func NewCoordinator(cfg Config) (*Coordinator, error) {
 func (c *Coordinator) transformWorkflowEvent(_ context.Context, cmd *store.Command, res any) ([]*store.Command, error) {
 	switch cmd.Type {
 	case flowstore.CmdFireTimers:
+		if wfs, ok := res.([]*flow.WorkflowInstance); ok {
+			var out []*store.Command
+			for _, wf := range wfs {
+				out = append(out, c.commandsForWorkflowInstance(wf)...)
+			}
+			return out, nil
+		}
 		var ids []string
 		if s, ok := res.([]string); ok {
 			ids = s
@@ -218,6 +225,9 @@ func (c *Coordinator) commandsForWorkflowInstance(wf *flow.WorkflowInstance) []*
 			if step == nil || !step.IsActivity() || step.Status != flow.StepStatusRunning {
 				continue
 			}
+			if wf.Version > 0 && step.DispatchedVersion > 0 && step.DispatchedVersion != wf.Version {
+				continue
+			}
 			task := worker.ActivityTask{
 				WorkflowID:   wf.WorkflowID,
 				RunID:        wf.RunID,
@@ -248,6 +258,9 @@ func (c *Coordinator) commandsForWorkflowInstance(wf *flow.WorkflowInstance) []*
 		for _, name := range wf.StepOrder {
 			step := wf.Steps[name]
 			if step == nil || step.Status != flow.StepStatusCompensating {
+				continue
+			}
+			if wf.Version > 0 && step.DispatchedVersion > 0 && step.DispatchedVersion != wf.Version {
 				continue
 			}
 			compTask := worker.CompensationTask{
