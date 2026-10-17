@@ -6,250 +6,114 @@
 
 **Distributed Sagas & Multi-Step Workflow Orchestration without Temporal, Kafka, or fragile Redis locks.**
 
-`plexus-flow` is a distributed workflow engine built directly on the **Plexus Raft Graph & Command Topology**. Workflows are modeled as deterministic state machines with automatic compensating actions. As steps complete, the Raft Graph deterministically advances downstream activities and compensating rollbacks with guaranteed **Exactly-Once Semantics (EOS)**, even in the face of network retries, node crashes, and leader failovers.
+`plexus-flow` is a distributed workflow engine built on the **Plexus Raft Graph**. Start as a single binary with zero external dependencies, and independently scale any step horizontally by spinning up stateless worker processes—without managing service discovery, inter-service RPCs, message brokers, or distributed locks.
+
+> Curious how `plexus-flow` solves dual writes, zombie workers, and split-brain without external brokers—and what the trade-offs are? Jump to [**Under the Hood: Distributed Systems Guarantees & Trade-offs**](#under-the-hood-distributed-systems-guarantees--trade-offs).
 
 ---
 
-## Why Plexus-Flow?
+## Architecture Comparison: Monolith vs. Microservices vs. Plexus-Flow
 
-| Challenge | Traditional Approach (Temporal / Kafka / Redis) | Plexus-Flow |
-|---|---|---|
-| **Infrastructure Overhead** | Requires external Temporal Server clusters, Cassandra/PostgreSQL, Kafka brokers, ZooKeeper/KRaft. | **Zero external dependencies.** Embedded Raft machines and Go binaries in a single process or multi-node cluster. |
-| **Deduplication & EOS** | Manual application-level idempotency keys in Redis, database unique indexes, fragile distributed locks. | **Native Exactly-Once Semantics (EOS).** Deterministic idempotency keys (`UpstreamID:Term:Index:Seq`) verified by embedded deduplication engines (`dedup.Store`). |
-| **Saga Rollback** | Bespoke compensation logic, ad-hoc state polling, or complicated Zeebe/Camunda BPMN engines. | **First-class Saga state machine.** Automatic LIFO (reverse-order of completion) compensation with audit trail. |
-| **Coordination** | Network calls between separate workflow workers, database state poles, and message brokers. | **Raft Graph Command Topology.** Upstream workflow commits deterministically pipe downstream activity dispatches via reactive consensus hooks. |
+### 1. Monolith — *Simple communication, hard to scale*
+All steps are tightly coupled in one process. To scale a single CPU-heavy step (e.g., `charge-card`), you must duplicate the entire application and scale database connections with it. A process crash mid-flight loses in-memory execution state.
 
----
-
-## Architecture Overview
-
+```mermaid
+flowchart LR
+    subgraph Monolith ["Monolith Replica (All-or-Nothing Scaling)"]
+        direction LR
+        A["Reserve Inventory"] --> B["Charge Card (Bottleneck)"] --> C["Ship Item"]
+    end
+    Monolith <--> DB[("Shared DB")]
 ```
-                      PLEXUS RAFT GRAPH TOPOLOGY
-  +-------------------------------------------------------------------+
-  |                                                                   |
-  |   +-----------------------------------------------------------+   |
-  |   |             UPSTREAM: WORKFLOW MACHINE (Raft)             |   |
-  |   |                                                           |   |
-  |   |   +---------------------------------------------------+   |   |
-  |   |   |                     FlowStore                     |   |   |
-  |   |   |  - Workflow Instances (ID, RunID, Status)         |   |   |
-  |   |   |  - DAG / Pipeline Execution State                 |   |   |
-  |   |   |  - Step Executions (Attempt, Output, Error)       |   |   |
-  |   |   |  - Audit History Event Log                        |   |   |
-  |   |   +---------------------------------------------------+   |   |
-  |   +-----------------------------+-----------------------------+   |
-  |                                 |                                 |
-  |                      Commit Observer Hook                         |
-  |                                 v                                 |
-  |   +-----------------------------------------------------------+   |
-  |   |            GRAPH PIPE & EVENT TRANSFORMER                 |   |
-  |   |   Transform(ctx, cmd, res) -> []Command                   |   |
-  |   |   * If RUNNING: NextReadySteps() -> "activity.dispatch"   |   |
-  |   |   * If COMPENSATING: NextCompensating() -> "activity.cmp" |   |
-  |   |   * Deterministic EOS Key: UpstreamID:Term:Index:Seq      |   |
-  |   +-----------------------------+-----------------------------+   |
-  |                                 |                                 |
-  |                      Reliable Dispatch Edge                       |
-  |                                 v                                 |
-  |   +-----------------------------------------------------------+   |
-  |   |            DOWNSTREAM: ACTIVITY MACHINE (Raft)            |   |
-  |   |                                                           |   |
-  |   |   +---------------------------------------------------+   |   |
-  |   |   |         AttachDedupInterceptor (dedup.Store)      |   |   |
-  |   |   |   Checks Idempotency Key -> Rejects Duplicates    |   |   |
-  |   |   +-------------------------+-------------------------+   |   |
-  |   |                             v                             |   |
-  |   |   +---------------------------------------------------+   |   |
-  |   |   |                   ActivityStore                   |   |   |
-  |   |   |   Records Dispatches & Emits Tasks to Workers     |   |   |
-  |   |   +-------------------------+-------------------------+   |   |
-  |   +-----------------------------|-----------------------------+   |
-  +---------------------------------|---------------------------------+
-                                    |
-                                    v
-  +-------------------------------------------------------------------+
-  |                       WORKER EXECUTOR                             |
-  |  - Registry of Go ActivityFuncs                                   |
-  |  - Execution with Timeouts & Backoff Retries                      |
-  |  - Proposes Completion / Failure back to Upstream Workflow Raft   |
-  |                                                                   |
-  |  On Success:  workflowMachine.Apply("flow.step.complete")         |
-  |  On Failure:  workflowMachine.Apply("flow.step.fail")             |
-  |  On Rollback: workflowMachine.Apply("flow.step.comp.complete")    |
-  +-------------------------------------------------------------------+
+
+### 2. Microservices — *Granular scaling, operational & communication nightmare*
+Each step is a separate service. Scaling is granular, but now every service needs service discovery, load balancers, mTLS/IAM policies, schema contracts, retry/circuit-breaker logic, idempotency tables, and external message brokers or orchestrators (Kafka, Temporal, Redis) just to talk to the next step and roll back on failure.
+
+```mermaid
+flowchart TD
+    S1["Inventory Service"] <-->|mTLS / Auth / Retries| Broker[["Kafka / Temporal / Redis"]]
+    S2["Payment Service (x3)"] <-->|mTLS / Auth / Retries| Broker
+    S3["Shipping Service"] <-->|mTLS / Auth / Retries| Broker
+    S1 <-->|Direct RPC / Mesh| S2
+    S2 <-->|Direct RPC / Mesh| S3
+    S1 --- DB1[("DB 1")]
+    S2 --- DB2[("DB 2")]
+    S3 --- DB3[("DB 3")]
+    Broker --- Infra[("Cassandra / ZooKeeper / DLQs")]
+```
+
+### 3. Plexus-Flow — *Monolith simplicity, per-step scaling, zero inter-service plumbing*
+Workers **never talk to each other** and **never expose ingress ports**. `plexus-flow` owns workflow state, routing, deduplication, and LIFO Saga rollbacks. Activities can run **in-process** (like a monolith) and seamlessly burst out to **stateless remote workers** (in Go, Python, etc.) that subscribe over an outbound gRPC stream to pull work for specific steps.
+
+```mermaid
+flowchart BT
+    PF[["Plexus-Flow Cluster"]]
+
+    W1["Inventory Worker (x1)"] -->|"Subscribes (gRPC)"| PF
+    W2["Payment Workers (x3)"] -->|"Subscribes (gRPC)"| PF
+    W3["Shipping Worker (x1)"] -->|"Subscribes (gRPC)"| PF
 ```
 
 ---
 
-## Core Features
+## Why Plexus-Flow Wins on Deployment & Maintenance
 
-1. **Stateful Workflow Models (`pkg/flow`)**:
-   - Workflows with states: `PENDING`, `RUNNING`, `COMPLETED`, `FAILED`, `COMPENSATING`, `COMPENSATED`, `CANCELLED`.
-   - Directed Acyclic Graph (DAG) validation with Kahn's algorithm cycle detection.
-   - Sequential pipelines or fork-join parallel dependencies (`DependsOn`).
-   - Audit event log with nanosecond timestamping.
-
-2. **Raft State Store (`pkg/flowstore`)**:
-   - Implements `plexus.Store`.
-   - Replicated state machine with zero state divergence.
-   - Snapshot & restore support for fast cluster recovery.
-
-3. **Raft Graph Coordinator (`pkg/graphflow`)**:
-   - Wires upstream workflow commits to downstream activity triggers using `plexus.NewGraph()`.
-   - Uses `dedup.Store` and `AttachDedupInterceptor` for Exactly-Once Semantics (EOS).
-
-4. **Activity Worker Pool (`pkg/worker`)**:
-   - In-process or external activity registry (`ActivityFunc`).
-   - Timeout context propagation and configurable exponential retry backoff.
-   - Automatic execution of compensating actions during Saga rollback.
-
-5. **REST API & Go SDK (`pkg/api`)**:
-   - Clean HTTP endpoints:
-     - `POST /api/v1/workflows/start`
-     - `GET /api/v1/workflows/{id}`
-     - `GET /api/v1/workflows`
-     - `POST /api/v1/workflows/{id}/signal`
-     - `POST /api/v1/workflows/{id}/cancel`
-     - `GET /api/v1/cluster/status`
-   - Complete Go SDK client (`api.NewClient`).
+| Dimension | Monolith | Microservices (Temporal / Kafka / Redis) | Plexus-Flow |
+|---|---|---|---|
+| **Scaling Granularity** | **Coarse:** Must clone the entire binary & DB pool to scale one slow step. | **Fine-grained,** but requires deploying & autoscaling full independent services. | **Per-step & elastic:** Run steps in-process by default; spin up stateless workers only for bottleneck activities. |
+| **Inter-Service Communication** | Function calls in memory. | **High friction:** Service mesh, DNS/discovery, API versioning, circuit breakers, DLQs. | **Zero inter-service calls:** Workers never know about each other; `plexus-flow` pipes outputs to downstream inputs. |
+| **Network & Access Control (Firewall/IAM)** | Single ingress; shared internal DB credentials. | **$O(N^2)$ ACLs:** mTLS certs, IAM roles, and firewall rules between every service pair and broker. | **Outbound-only workers:** Workers open no listening ports and need no service discovery—just subscribe to the cluster's gRPC address. |
+| **Infrastructure Tax** | 1 App + 1 DB. | App fleet + Kafka + Temporal Server + Cassandra/Postgres + Redis. | **Zero external dependencies:** Consensus, storage, deduplication, and UI are embedded in the binary. |
+| **Failure, Liveness & Rollback** | Lost on crash unless manually checkpointed to DB. | Custom compensation consumers, orphan sweepers, and manual lock timeouts. | **Built-in:** Automatic LIFO Saga compensation, worker heartbeats, dead-worker task redelivery, and step timeouts. |
+| **Exactly-Once Semantics (EOS)** | Local DB transactions only; manual keys for external APIs. | Manual idempotency keys and deduplication tables in every microservice. | **Native EOS:** Deterministic Raft Graph keys (`UpstreamID:Term:Index:Seq`) enforced before dispatch. |
+| **Safe Rollouts & Versioning** | Redeploy everything for a one-line change; risky migrations. | Coordinate multi-repo deployments and backward-compatible RPC schemas. | **Decoupled:** Upgrade or restart stateless activity workers at any time; the cluster buffers and redelivers in-flight tasks. |
+| **Observability** | Single log stream / stack trace. | Stitch OpenTelemetry/Jaeger traces across dozens of queues and services. | **Built-in Flow & Trace Dashboard** + live SSE push streams out of the box. |
 
 ---
 
-## Quick Start
+## Built-in Visibility: Flow & Trace Dashboard
 
-### 1. Build the Binary
+In a monolith, business logic is hidden inside code branches; in microservices, it is scattered across repositories, message queues, and stitched-together OpenTelemetry spans.
 
-```bash
-go build -o bin/plexus-flow ./cmd/plexus-flow
-```
+A service built with `plexus-flow` is **self-describing**—just as a REST API schema tells you what endpoints exist, `plexus-flow` automatically exposes the complete **flow** (every activity and transition, including failure and rollback paths) and overlays live **traces** of actual runs directly on top of it. Zero external tracing infrastructure (Jaeger, Datadog, Zipkin) required.
 
-### 2. Run the Built-in Order Processing Saga Demo
-
-#### Happy Path (Full Success):
-```bash
-./bin/plexus-flow --run-example
-```
-
-Output:
-```text
-  ____  _                      _____ _                 
- |  _ \| |                    |  ___| | _____      __  
- | |_) | | _____  ___   _ ___ | |_  | |/ _ \ \ /\ / /  
- |  __/| |/ _ \ \/ / | | / __||  _| | | (_) \ V  V /   
- |_|   |_|\___/_/\_\ |_| \__ \|_|   |_|\___/ \_/\_/    
-                    \__,_|___/                         
-   Distributed Sagas & Workflows without Temporal or Kafka
-
-[Plexus-Flow] Node ID: node-1
-[Plexus-Flow] Workflow Raft: 127.0.0.1:9000
-[Plexus-Flow] Activity Raft: 127.0.0.1:9001
-[Plexus-Flow] HTTP API:      http://127.0.0.1:8080
-[Plexus-Flow] Data Dir:      ./data
-[Consensus] Starting Raft consensus engines...
-[Consensus] Waiting for Raft leadership...
-[Consensus] Node elected leader on both machines! Raft quorum active.
-[API] HTTP API listening on 127.0.0.1:8080
-
-========================================================================
-[DEMO] Starting Order Processing Saga Demonstration...
-[DEMO] Mode: HAPPY PATH (All steps succeed)
-========================================================================
-[DEMO] Workflow started: ID=ORD-9901 RunID=run-1791203543749
-  [ACTIVITY] reserve-inventory -> RESERVING item ITEM-42 for Order...
-  [ACTIVITY] reserve-inventory -> SUCCESS: Inventory reserved!
-  [ACTIVITY] charge-card -> CHARGING credit card $149.99...
-  [ACTIVITY] charge-card -> SUCCESS: Card charged $149.99!
-  [ACTIVITY] ship-item -> CREATING shipping label with courier...
-  [ACTIVITY] ship-item -> SUCCESS: Package dispatched! Tracking: TRK-554433
-
-========================================================================
-[DEMO RESULT] SAGA FINISHED SUCCESSFULLY: Status = COMPLETED
-[DEMO RESULT] All steps executed and committed via Raft Graph with EOS!
-========================================================================
-```
-
-#### Automatic Saga Rollback Demo (Simulated Failure):
-
-```bash
-./bin/plexus-flow --run-example --simulate-failure --fail-step charge-card
-```
-
-Output:
-```text
-========================================================================
-[DEMO] Starting Order Processing Saga Demonstration...
-[DEMO] Mode: SIMULATED FAILURE on step 'charge-card' (Triggering Automatic Saga Compensation)
-========================================================================
-[DEMO] Workflow started: ID=ORD-9902 RunID=run-1791203543881
-  [ACTIVITY] reserve-inventory -> RESERVING item ITEM-42 for Order...
-  [ACTIVITY] reserve-inventory -> SUCCESS: Inventory reserved!
-  [ACTIVITY] charge-card -> CHARGING credit card $149.99...
-  [ACTIVITY] charge-card -> ERROR: Card declined: insufficient funds!
-  [COMPENSATION] release-inventory -> RELEASING item ITEM-42 back to stock...
-  [COMPENSATION] release-inventory -> SUCCESS: Inventory released back to stock!
-
-========================================================================
-[DEMO RESULT] SAGA ROLLED BACK SAFELY: Status = COMPENSATED
-[DEMO RESULT] Failed step triggered automatic reverse-order compensation!
-[DEMO RESULT] No orphaned transactions. System returned to clean state.
-========================================================================
-```
-
----
-
-## Flow Dashboard
-
-A REST API reads like a schema: the path and verb tell you what the server will do. A service built with plexus-flow can be read the same way. It exposes its **flows** (every activity and every transition, including failure and rollback paths) and the **traces** of actual runs on top of them.
-
-Every node running `plexus-flow` serves the dashboard at `/`:
+Every node serves the interactive dashboard out of the box at `/`:
 
 ```bash
 go run ./cmd/plexus-flow --run-example --simulate-failure --fail-step ship-item
 # open http://127.0.0.1:8080
 ```
 
-### Flow
-
-The shape of the business logic. Solid grey edges are the happy path, red dashed edges show what happens when a step fails, and amber nodes are the compensating actions that undo completed steps in reverse order. Click a node for its activity, retries, timeout, dependencies and what undoes it.
+### 1. Flow View — *The Shape of Your Business Logic*
+Derived automatically from your step dependencies and compensating actions—with nothing extra to declare. Solid grey edges show the happy path, red dashed edges show failure transitions, and amber nodes show the compensating actions that undo completed steps in reverse order. Click any node to inspect its activity, retries, timeout, dependencies, and compensation.
 
 ![Flow view](docs/images/dashboard_flow.png)
 
-### Traces
-
-The same graph with one run overlaid: the path taken is highlighted and numbered, untaken branches are faded, and nodes show duration, attempts and errors. Below, a timeline shows when each step ran. Running traces refresh live.
+### 2. Traces View — *Live Execution & Rollback Inspection*
+The exact same graph overlaid with a real execution: the path taken is highlighted and numbered step-by-step, untaken branches are faded, and each node displays its duration, attempt count, inputs/outputs, and errors. A live timeline below tracks execution progression in real time over Server-Sent Events (SSE).
 
 ![Traces view](docs/images/dashboard_traces.png)
 
-### Flows & traces API
+---
 
-| Endpoint | Returns |
-|---|---|
-| `GET /api/v1/flows` | Known flows with run counts by status |
-| `GET /api/v1/flows/{name}` | The flow graph: nodes plus `success`, `failure` and `compensation` edges |
-| `GET /api/v1/flows/{name}/traces?status=` | Runs of the flow, newest first |
-| `GET /api/v1/traces/{workflowID}` | One run overlaid on its graph: path, edges taken, per-node duration, attempts, error, input/output |
-| `GET /api/v1/workflows/{id}/watch` | Server-sent events: the workflow's current state, then every change, until it reaches a terminal status |
-| `GET /api/v1/flows/{name}/watch?terminal=1` | Server-sent events: a summary of every change to any run of the flow (only terminal ones with `terminal=1`) |
+## Quick Start
 
-### Watching instead of polling
+```bash
+# Build
+go build -o bin/plexus-flow ./cmd/plexus-flow
 
-Workers already receive their tasks over a long-lived gRPC stream. Clients get the same push model through the watch endpoints above. Every change to a workflow bumps its `version`, which is identical on every replica, and is pushed to matching watchers as it is applied. A watcher that falls too far behind is disconnected rather than allowed to slow the state machine; it reconnects and reads the current state. The dashboard uses these streams for live updates.
+# Run happy-path Saga demo
+./bin/plexus-flow --run-example
 
-```go
-final, err := client.WaitWorkflow(ctx, "order-42")             // blocks until terminal
-err = client.WatchWorkflow(ctx, "order-42", func(wf *flow.WorkflowInstance) error { ...; return nil })
+# Run automatic Saga rollback demo (simulates failure & reverse-order compensation)
+./bin/plexus-flow --run-example --simulate-failure --fail-step charge-card
 ```
-
-```python
-from plexus_flow import wait_for, watch_workflow    # Python SDK, standard library only
-final = wait_for("http://127.0.0.1:8080", "order-42")
-```
-
-Failure and rollback edges are derived from step dependencies and compensating actions, so there is nothing extra to declare. Starting a workflow registers its flow. To make a flow visible before its first run, call `coord.RegisterFlow(def)`.
 
 ---
 
-## Code Example: Defining a Saga in Go
+## Defining a Saga in Go
+
+Activities run in-process via `worker.Registry`, or on remote workers subscribing over gRPC (`pkg/remote`)—the workflow definition stays identical:
 
 ```go
 package main
@@ -257,9 +121,7 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"log"
-	"time"
 
 	"github.com/avivklas/plexus-flow/pkg/flow"
 	"github.com/avivklas/plexus-flow/pkg/flowstore"
@@ -268,87 +130,126 @@ import (
 )
 
 func main() {
-	// 1. Register activities and compensating actions
 	registry := worker.NewRegistry()
 
-	// Activity 1: Reserve Inventory
 	registry.Register("reserve-inventory", func(ctx context.Context, in json.RawMessage) (json.RawMessage, error) {
-		log.Println("Reserving inventory...")
 		return json.RawMessage(`{"reserved": true}`), nil
 	})
-	// Compensation 1: Release Inventory
 	registry.Register("release-inventory", func(ctx context.Context, in json.RawMessage) (json.RawMessage, error) {
-		log.Println("Compensating: Releasing inventory...")
 		return json.RawMessage(`{"released": true}`), nil
 	})
-
-	// Activity 2: Charge Card
 	registry.Register("charge-card", func(ctx context.Context, in json.RawMessage) (json.RawMessage, error) {
-		log.Println("Charging credit card...")
 		return json.RawMessage(`{"charged": true}`), nil
 	})
-	// Compensation 2: Refund Card
 	registry.Register("refund-card", func(ctx context.Context, in json.RawMessage) (json.RawMessage, error) {
-		log.Println("Compensating: Refunding card...")
 		return json.RawMessage(`{"refunded": true}`), nil
 	})
 
-	// 2. Initialize embedded Raft Graph coordinator
 	coord, err := graphflow.NewEmbeddedCoordinator(registry)
 	if err != nil {
-		log.Fatalf("init coordinator: %v", err)
+		log.Fatal(err)
 	}
 	defer coord.Close()
 
-	// 3. Define the multi-step Saga
 	def := flow.WorkflowDefinition{
 		Name: "ecommerce-order-saga",
 		Steps: []flow.StepDefinition{
-			{
-				Name:               "step-inventory",
-				Activity:           "reserve-inventory",
-				CompensatingAction: "release-inventory",
-			},
-			{
-				Name:               "step-payment",
-				Activity:           "charge-card",
-				CompensatingAction: "refund-card",
-			},
+			{Name: "step-inventory", Activity: "reserve-inventory", CompensatingAction: "release-inventory"},
+			{Name: "step-payment", Activity: "charge-card", CompensatingAction: "refund-card"},
 		},
 	}
 
-	// 4. Start the workflow
-	ctx := context.Background()
-	wf, err := coord.StartWorkflow(ctx, flowstore.StartWorkflowRequest{
+	_, err = coord.StartWorkflow(context.Background(), flowstore.StartWorkflowRequest{
 		WorkflowID: "order-1001",
 		Definition: def,
 		Input:      json.RawMessage(`{"amount": 149.99}`),
 	})
 	if err != nil {
-		log.Fatalf("start workflow: %v", err)
+		log.Fatal(err)
 	}
-
-	fmt.Printf("Workflow %s running with RunID %s\n", wf.WorkflowID, wf.RunID)
 }
 ```
 
+### Push Watchers & HTTP API (`pkg/api`)
+
+Instead of polling, clients subscribe to Server-Sent Events (SSE) pushed on every state transition:
+
+```go
+final, err := client.WaitWorkflow(ctx, "order-1001") // Go SDK: blocks until terminal state
+```
+
+```python
+from plexus_flow import wait_for                    # Python SDK (stdlib only)
+final = wait_for("http://127.0.0.1:8080", "order-1001")
+```
+
+| Endpoint | Description |
+|---|---|
+| `POST /api/v1/workflows/start` | Start a new workflow instance |
+| `GET /api/v1/workflows/{id}` | Get workflow state (`POST .../signal`, `POST .../cancel`) |
+| `GET /api/v1/workflows/{id}/watch` | SSE stream of state changes until terminal status |
+| `GET /api/v1/flows` / `GET /api/v1/flows/{name}` | List known flows and inspect DAG + compensation edges |
+| `GET /api/v1/traces/{workflowID}` | Execution trace overlaid on the flow graph |
+
 ---
 
-## Running the Test Suite
+## Under the Hood: Distributed Systems Guarantees & Trade-offs
 
-Run all unit tests, graph integration tests, and saga rollback scenarios:
+Distributed workflow engines exist because **local state and remote side-effects cannot be updated in a single atomic transaction**. Below is how `plexus-flow` solves classic distributed systems failure modes using the **Plexus Raft Graph**, followed by the architectural trade-offs it makes.
+
+```mermaid
+flowchart LR
+    subgraph Cluster ["Plexus-Flow Consensus Topology"]
+        direction LR
+        U["Upstream: Workflow Raft Machine\n(FlowStore FSM)"] -->|"Commit Hook\nKey = UpstreamID:Term:Index:Seq"| D["Downstream: Activity Raft Machine\n(Dedup Interceptor -> ActivityStore)"]
+    end
+    W["Stateless Worker Pool"] -->|"1. Subscribe & Heartbeat (gRPC)"| D
+    D -.->|"2. Push Lease-Bounded Task"| W
+    W -->|"3. Propose Step Complete/Fail"| U
+```
+
+### How Classic Distributed Failure Modes Are Solved
+
+1. **The Dual-Write Problem (Update DB + Publish to Queue)**
+   - *Classic failure:* A service commits a state change to Postgres, then crashes before publishing the next event to Kafka—leaving the workflow permanently stuck (or publishes first and crashes before the DB commit, causing phantom tasks).
+   - *How `plexus-flow` solves it:* There is no separate database and message broker. An upstream **Workflow Raft Machine** (`FlowStore`) and a downstream **Activity Raft Machine** (`ActivityStore`) are wired via a **Raft Graph Pipe**. The Raft log *is* both the state store and the durable event log. Every committed workflow transition deterministically triggers the graph pipe to emit the next activity command.
+
+2. **Duplicate Dispatch on Leader Failover (Exactly-Once State Transitions)**
+   - *Classic failure:* A coordinator node dispatches a task, crashes mid-flight, and the new leader re-processes the uncommitted state—dispatching the same task twice.
+   - *How `plexus-flow` solves it:* Every command emitted across the Raft Graph edge is stamped with a deterministic idempotency key derived from the upstream Raft log coordinate:
+     $$\text{IdempotencyKey} = \text{UpstreamID}:\text{Term}:\text{Index}:\text{Seq}$$
+     Before `ActivityStore` records or dispatches any task, an embedded `dedup.Store` interceptor verifies this key inside the downstream Raft machine. Even if a leader crashes and the new leader replays the pipe, duplicates are deterministically rejected at consensus level.
+
+3. **Split-Brain & Stale Reads**
+   - *Classic failure:* A network partition isolates an old leader or a replica serves stale workflow state, causing double execution or premature step advancement.
+   - *How `plexus-flow` solves it:* All workflow mutations require a Raft quorum commit, and task dispatching is strictly gated by `IsLeader()`. Through Plexus's quorum-commit + local-apply synchronization, once a mutation returns, subsequent local memory reads on that node are strictly consistent without extra network round-trips.
+
+4. **Zombie Workers, Crash Mid-Activity & Stale Completions**
+   - *Classic failure:* A worker pulls a task and freezes (GC pause, network blackhole, OOM). Another worker picks up the timed-out task, and both eventually report back—corrupting workflow state.
+   - *How `plexus-flow` solves it:* Workers maintain a liveness session via periodic heartbeats (`HeartbeatInterval`, default `2s`) and per-step execution deadlines. If a worker goes silent for 3 intervals, the broker marks it `WORKER_LOST` and redelivers or retries the task. When theUpstream Workflow FSM receives a completion/failure proposal, it validates the current `StepStatus` and `Attempt`—stale completions from zombie workers are safely ignored, and superseded in-flight tasks receive an active cancellation signal over their gRPC stream.
+
+5. **Partial Failure Across Distributed Steps (Distributed Transactions without 2PC)**
+   - *Classic failure:* Two-Phase Commit (2PC) holds cross-service locks and blocks availability whenever a single participant is slow or unreachable.
+   - *How `plexus-flow` solves it:* First-class **LIFO Saga state machine**. When a step exhausts its retries, the workflow transitions to `COMPENSATING`. The state machine walks the completed DAG nodes in reverse completion order, piping `activity.compensate` commands through the same Raft Graph with automatic retries until the workflow reaches `COMPENSATED`.
+
+### Architectural Trade-offs (What We Optimize For—and What We Don't)
+
+No distributed system escapes the CAP and PACELC theorems. `plexus-flow` makes deliberate trade-offs to eliminate operational complexity:
+
+| Trade-off | What `plexus-flow` Chooses | Why & When It Matters |
+|---|---|---|
+| **Write Throughput Ceiling vs. Zero-Infra Simplicity** | **Single Raft Group Consensus** per workflow machine (scales vertically and across a 3–5 node quorum, not horizontally sharded like Cassandra). | Every step transition writes a Raft log entry (`2 * Steps + 1` commits per workflow). Ideal for hundreds to low-thousands of state transitions/sec with sub-millisecond local disk I/O—not designed for millions of telemetry events/sec unless sharded across multiple independent `plexus-flow` clusters. |
+| **CP (Consistency over Availability) under Partition** | **Strict Quorum (CP):** Minority partitions halt workflow advancement until quorum is restored. | Prevents split-brain double-charging or corrupted Saga state. Requires 3 or 5 nodes for high availability; if a majority of consensus nodes fail simultaneously, workflows pause safely rather than diverge. |
+| **Memory-Resident State + Snapshots vs. Disk-Backed Query Engine** | **In-Memory FSM with Raft Log & Snapshots.** | Active and recent workflows live in memory for microsecond DAG evaluation and zero-latency SSE streaming. If you retain millions of historical completed workflows forever without archival/compaction, memory usage grows proportionally. |
+| **Engine-Side EOS vs. External Side-Effects** | **Consensus-Level Dispatch EOS + At-Least-Once Worker Execution** on crash. | The Raft Graph guarantees a step transition emits a task *exactly once*. However, if a remote worker calls an external API (e.g., Stripe) and crashes *one nanosecond before* acknowledging completion to `plexus-flow`, the task will be redelivered. External side-effect handlers should still pass the provided deterministic task key (`WorkflowID:RunID:Step:Attempt`) to external APIs. |
+
+---
+
+## Testing
 
 ```bash
 go test -v ./...
 ```
-
-All packages pass:
-- `pkg/flow`: DAG cycle validation, topological ordering, and reverse-order compensation candidate selection.
-- `pkg/flowstore`: Raft-replicated state mutations, step transitions, audit trail, and snapshot recovery.
-- `pkg/worker`: Activity execution, timeouts, exponential backoff retries, and task deduplication.
-- `pkg/graphflow`: Raft Graph coordinator, edge dispatching, and Exactly-Once Semantics (EOS).
-- `pkg/api`: HTTP REST API and Go SDK client.
-- `test`: End-to-end integration tests (Full Success Saga, Reverse-Order Rollback Saga, DAG Fork-Join, Snapshot Mid-Execution Recovery).
 
 ---
 
