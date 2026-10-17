@@ -26,6 +26,12 @@ const (
 	CmdCancelWorkflow           store.CommandType = "flow.workflow.cancel"
 	CmdSignalWorkflow           store.CommandType = "flow.workflow.signal"
 	CmdFireTimer                store.CommandType = "flow.step.timer"
+	CmdFireTimers               store.CommandType = "flow.step.timers"
+	CmdUpdateStepProgress       store.CommandType = "flow.step.progress"
+	CmdCompactWorkflows         store.CommandType = "flow.workflow.compact"
+	CmdUpsertSchedule           store.CommandType = "flow.schedule.upsert"
+	CmdDeleteSchedule           store.CommandType = "flow.schedule.delete"
+	CmdTriggerSchedule          store.CommandType = "flow.schedule.trigger"
 )
 
 // StartWorkflowRequest initiates a new workflow execution.
@@ -46,11 +52,56 @@ type DispatchStepRequest struct {
 	At time.Time `json:"at,omitempty"`
 }
 
-// FireTimerRequest resolves a sleeping or signal-waiting step whose time has come.
+// FireTimerRequest resolves a sleeping, signal-waiting, or retry-backoff step whose time has come.
 type FireTimerRequest struct {
 	WorkflowID string    `json:"workflow_id"`
 	RunID      string    `json:"run_id"`
 	StepName   string    `json:"step_name"`
+	At         time.Time `json:"at"`
+}
+
+// FireTimersRequest resolves a batch of expired step timers in a single Raft commit.
+type FireTimersRequest struct {
+	Timers []TimerRef `json:"timers"`
+	At     time.Time  `json:"at"`
+}
+
+// UpdateStepProgressRequest records an activity heartbeat progress checkpoint on a running step.
+type UpdateStepProgressRequest struct {
+	WorkflowID string          `json:"workflow_id"`
+	RunID      string          `json:"run_id,omitempty"`
+	StepName   string          `json:"step_name"`
+	Progress   json.RawMessage `json:"progress"`
+}
+
+// CompactWorkflowsRequest evicts terminal workflows older than Before or beyond MaxRetained.
+type CompactWorkflowsRequest struct {
+	// Before evicts terminal workflows completed at or before this timestamp (if non-zero).
+	Before time.Time `json:"before,omitempty"`
+	// MaxRetained caps the number of terminal workflows kept in hot memory (0 means no count cap).
+	MaxRetained int `json:"max_retained,omitempty"`
+}
+
+// CompactWorkflowsResponse reports which terminal workflows were evicted/archived.
+type CompactWorkflowsResponse struct {
+	Compacted   int      `json:"compacted"`
+	WorkflowIDs []string `json:"workflow_ids,omitempty"`
+}
+
+// UpsertScheduleRequest creates or updates a durable recurring workflow schedule.
+type UpsertScheduleRequest struct {
+	Schedule flow.Schedule `json:"schedule"`
+	Now      time.Time     `json:"now,omitempty"`
+}
+
+// DeleteScheduleRequest removes a schedule by ID.
+type DeleteScheduleRequest struct {
+	ScheduleID string `json:"schedule_id"`
+}
+
+// TriggerScheduleRequest fires a due schedule at the given timestamp, starting its workflow run.
+type TriggerScheduleRequest struct {
+	ScheduleID string    `json:"schedule_id"`
 	At         time.Time `json:"at"`
 }
 
@@ -102,6 +153,7 @@ type FailCompensationStepRequest struct {
 	StepName   string `json:"step_name"`
 	Error      string `json:"error"`
 	Code       string `json:"code,omitempty"`
+	Retryable  bool   `json:"retryable,omitempty"`
 }
 
 // CompleteWorkflowRequest marks the entire workflow as COMPLETED.

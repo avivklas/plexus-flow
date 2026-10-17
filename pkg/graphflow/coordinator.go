@@ -28,9 +28,13 @@ type Config struct {
 	ActivityStore *worker.ActivityStore
 	DedupStore    dedup.Store
 	Registry      *worker.Registry
-	// TimerInterval is how often the leader looks for expired sleep and
-	// signal-wait timers. Defaults to 100ms.
+	// TimerInterval is how often the leader looks for expired sleep,
+	// signal-wait, and retry-backoff timers. Defaults to 100ms.
 	TimerInterval time.Duration
+	// RetentionTTL evicts terminal workflows older than this duration when > 0.
+	RetentionTTL time.Duration
+	// MaxCompletedWorkflows caps hot terminal workflows in memory when > 0.
+	MaxCompletedWorkflows int
 }
 
 // Coordinator wires the Raft Graph command topology between workflow states and activity execution.
@@ -78,6 +82,10 @@ func NewCoordinator(cfg Config) (*Coordinator, error) {
 		cfg.Registry = worker.NewRegistry()
 	}
 
+	// Enable single-commit atomic step advancement on FlowStore so ready steps
+	// and compensation steps transition inside the same Raft commit.
+	cfg.FlowStore.SetAutoAdvance(true)
+
 	g := graph.New(cfg.GraphName)
 
 	// Attach deduplication store to downstream machine & activity store
@@ -114,9 +122,13 @@ func NewCoordinator(cfg Config) (*Coordinator, error) {
 		flowstore.CmdFailStep,
 		flowstore.CmdTriggerCompensation,
 		flowstore.CmdCompleteCompensationStep,
+		flowstore.CmdFailCompensationStep,
+		flowstore.CmdCompleteWorkflow,
 		flowstore.CmdCancelWorkflow,
 		flowstore.CmdSignalWorkflow,
 		flowstore.CmdFireTimer,
+		flowstore.CmdFireTimers,
+		flowstore.CmdTriggerSchedule,
 	)
 	c.edge = edge
 
@@ -131,124 +143,143 @@ func NewCoordinator(cfg Config) (*Coordinator, error) {
 	return c, nil
 }
 
-// transformWorkflowEvent transforms upstream committed workflow state changes into downstream activity commands.
-func (c *Coordinator) transformWorkflowEvent(ctx context.Context, cmd *store.Command, res any) ([]*store.Command, error) {
-	// Extract workflow ID from the command payload
+// transformWorkflowEvent transforms upstream committed workflow state changes into downstream activity commands
+// without any secondary Upstream.Apply Raft commits.
+func (c *Coordinator) transformWorkflowEvent(_ context.Context, cmd *store.Command, res any) ([]*store.Command, error) {
+	switch cmd.Type {
+	case flowstore.CmdFireTimers:
+		var ids []string
+		if s, ok := res.([]string); ok {
+			ids = s
+		} else {
+			var req flowstore.FireTimersRequest
+			if err := cmd.Decode(&req); err == nil {
+				seen := make(map[string]bool, len(req.Timers))
+				for _, t := range req.Timers {
+					if !seen[t.WorkflowID] {
+						seen[t.WorkflowID] = true
+						ids = append(ids, t.WorkflowID)
+					}
+				}
+			}
+		}
+		var out []*store.Command
+		for _, id := range ids {
+			if wf, ok := c.flowStore.GetWorkflow(id); ok && wf != nil {
+				out = append(out, c.commandsForWorkflowInstance(wf)...)
+			}
+		}
+		return out, nil
+
+	case flowstore.CmdTriggerSchedule:
+		if wf, ok := res.(*flow.WorkflowInstance); ok && wf != nil {
+			return c.commandsForWorkflowInstance(wf), nil
+		}
+		return nil, nil
+	}
+
+	if wf, ok := res.(*flow.WorkflowInstance); ok && wf != nil {
+		return c.commandsForWorkflowInstance(wf), nil
+	}
+
 	var baseReq struct {
 		WorkflowID string `json:"workflow_id"`
 	}
 	if err := cmd.Decode(&baseReq); err != nil || baseReq.WorkflowID == "" {
 		return nil, nil
 	}
-
 	wf, exists := c.flowStore.GetWorkflow(baseReq.WorkflowID)
 	if !exists || wf == nil {
 		return nil, nil
 	}
+	return c.commandsForWorkflowInstance(wf), nil
+}
+
+func (c *Coordinator) commandsForWorkflowInstance(wf *flow.WorkflowInstance) []*store.Command {
+	if wf == nil {
+		return nil
+	}
 
 	var downstreamCmds []*store.Command
 
+	if wf.IsTerminal() {
+		if pruneCmd, err := store.NewCommand(worker.CmdPruneWorkflowActivities, worker.PruneWorkflowActivitiesRequest{
+			WorkflowID: wf.WorkflowID,
+		}); err == nil {
+			downstreamCmds = append(downstreamCmds, pruneCmd)
+		}
+		return downstreamCmds
+	}
+
 	switch wf.Status {
 	case flow.StatusRunning:
-		// Resolving a step can ready the next one without any further command
-		// (a buffered signal completes its wait on dispatch), so go again
-		// until dispatching changes nothing but running state.
-		for wf.Status == flow.StatusRunning {
-			resolvedInline := false
-			for _, step := range wf.NextReadySteps() {
-				// Mark step running on upstream state machine so subsequent concurrent commits do not re-dispatch it.
-				// The store rejects a step that is no longer pending: another commit already
-				// dispatched it, so sending its task again would run it twice.
-				if _, err := c.cfg.Upstream.Apply(ctx, flowstore.CmdDispatchStep, flowstore.DispatchStepRequest{
-					WorkflowID: wf.WorkflowID,
-					RunID:      wf.RunID,
-					StepName:   step.Name,
-					At:         time.Now().UTC(),
-				}); err != nil {
-					continue
-				}
-
-				if !step.IsActivity() {
-					if _, status, ok := c.flowStore.StepState(wf.WorkflowID, step.Name); ok && status == flow.StepStatusCompleted {
-						resolvedInline = true
-					}
-					continue
-				}
-
-				task := worker.ActivityTask{
-					WorkflowID: wf.WorkflowID,
-					RunID:      wf.RunID,
-					StepName:   step.Name,
-					Activity:   step.Activity,
-					Input:      step.Input,
-					Timeout:    step.Timeout,
-					Retries:    step.MaxRetries,
-					Attempt:    step.Attempt,
-					Metadata:   wf.Metadata,
-				}
-				if len(step.DependsOn) > 0 {
-					task.DependencyOutputs = make(map[string]json.RawMessage, len(step.DependsOn))
-					for _, dep := range step.DependsOn {
-						if d := wf.Steps[dep]; d != nil {
-							task.DependencyOutputs[dep] = d.Output
-						}
+		for _, name := range wf.StepOrder {
+			step := wf.Steps[name]
+			if step == nil || !step.IsActivity() || step.Status != flow.StepStatusRunning {
+				continue
+			}
+			task := worker.ActivityTask{
+				WorkflowID:   wf.WorkflowID,
+				RunID:        wf.RunID,
+				StepName:     step.Name,
+				Activity:     step.Activity,
+				Input:        step.Input,
+				Timeout:      step.Timeout,
+				Retries:      step.MaxRetries,
+				RetryPolicy:  step.RetryPolicy,
+				Attempt:      max(step.Attempt-1, 0),
+				LastProgress: step.Progress,
+				Metadata:     wf.Metadata,
+			}
+			if len(step.DependsOn) > 0 {
+				task.DependencyOutputs = make(map[string]json.RawMessage, len(step.DependsOn))
+				for _, dep := range step.DependsOn {
+					if d := wf.Steps[dep]; d != nil {
+						task.DependencyOutputs[dep] = d.Output
 					}
 				}
-				dCmd, err := store.NewCommand(worker.CmdDispatchActivity, task)
-				if err != nil {
-					continue
-				}
+			}
+			if dCmd, err := store.NewCommand(worker.CmdDispatchActivity, task); err == nil {
 				downstreamCmds = append(downstreamCmds, dCmd)
-			}
-			if !resolvedInline {
-				break
-			}
-			var ok bool
-			if wf, ok = c.flowStore.GetWorkflow(wf.WorkflowID); !ok {
-				break
 			}
 		}
 
 	case flow.StatusCompensating:
-		// Find next compensating step (reverse order of completion)
-		nextComp := wf.NextCompensatingStep()
-		if nextComp != nil {
-			// Mark step compensating on upstream so subsequent concurrent commits do not re-dispatch it
-			_, _ = c.cfg.Upstream.Apply(ctx, flowstore.CmdStartCompensationStep, flowstore.StartCompensationStepRequest{
-				WorkflowID: wf.WorkflowID,
-				RunID:      wf.RunID,
-				StepName:   nextComp.Name,
-			})
-
+		for _, name := range wf.StepOrder {
+			step := wf.Steps[name]
+			if step == nil || step.Status != flow.StepStatusCompensating {
+				continue
+			}
 			compTask := worker.CompensationTask{
-				WorkflowID: wf.WorkflowID,
-				RunID:      wf.RunID,
-				StepName:   nextComp.Name,
-				Activity:   nextComp.CompensatingAction,
-				Input:      nextComp.Output,
-				Timeout:    nextComp.Timeout,
-				Retries:    nextComp.MaxRetries,
-				Attempt:    nextComp.Attempt,
+				WorkflowID:  wf.WorkflowID,
+				RunID:       wf.RunID,
+				StepName:    step.Name,
+				Activity:    step.CompensatingAction,
+				Input:       step.Output,
+				Timeout:     step.Timeout,
+				Retries:     step.MaxRetries,
+				RetryPolicy: step.RetryPolicy,
+				Attempt:     max(step.CompensationAttempt-1, 0),
 			}
 			if len(compTask.Input) == 0 {
-				compTask.Input = nextComp.Input
+				compTask.Input = step.Input
 			}
-			dCmd, err := store.NewCommand(worker.CmdCompensateActivity, compTask)
-			if err == nil {
+			if dCmd, err := store.NewCommand(worker.CmdCompensateActivity, compTask); err == nil {
 				downstreamCmds = append(downstreamCmds, dCmd)
 			}
 		}
 	}
 
-	return downstreamCmds, nil
+	return downstreamCmds
 }
 
-// runTimers resolves expired sleep and signal-wait steps. Only the leader
-// fires timers; each firing is idempotent, so overlapping leaders are harmless.
+// runTimers resolves expired sleep, signal-wait, and retry-backoff steps in batches,
+// triggers due cron schedules, and runs periodic workflow compaction.
 func (c *Coordinator) runTimers() {
 	defer close(c.timersDone)
 	ticker := time.NewTicker(c.cfg.TimerInterval)
 	defer ticker.Stop()
+	var ticks int
 	for {
 		select {
 		case <-c.stopTimers:
@@ -258,11 +289,39 @@ func (c *Coordinator) runTimers() {
 		if !c.cfg.Upstream.IsLeader() {
 			continue
 		}
+		ticks++
 		now := time.Now().UTC()
-		for _, due := range c.flowStore.DueTimers(now) {
+
+		// 1. Batch-fire all due step timers in a single Raft commit.
+		if due := c.flowStore.DueTimers(now); len(due) > 0 {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			_, _ = c.cfg.Upstream.Apply(ctx, flowstore.CmdFireTimer, flowstore.FireTimerRequest{
-				WorkflowID: due.WorkflowID, RunID: due.RunID, StepName: due.StepName, At: now,
+			_, _ = c.cfg.Upstream.Apply(ctx, flowstore.CmdFireTimers, flowstore.FireTimersRequest{
+				Timers: due,
+				At:     now,
+			})
+			cancel()
+		}
+
+		// 2. Trigger any due recurring workflow schedules.
+		for _, schedID := range c.flowStore.DueSchedules(now) {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			_, _ = c.cfg.Upstream.Apply(ctx, flowstore.CmdTriggerSchedule, flowstore.TriggerScheduleRequest{
+				ScheduleID: schedID,
+				At:         now,
+			})
+			cancel()
+		}
+
+		// 3. Periodically compact terminal workflows if retention limits are configured.
+		if (c.cfg.RetentionTTL > 0 || c.cfg.MaxCompletedWorkflows > 0) && ticks%10 == 0 {
+			var before time.Time
+			if c.cfg.RetentionTTL > 0 {
+				before = now.Add(-c.cfg.RetentionTTL)
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			_, _ = c.cfg.Upstream.Apply(ctx, flowstore.CmdCompactWorkflows, flowstore.CompactWorkflowsRequest{
+				Before:      before,
+				MaxRetained: c.cfg.MaxCompletedWorkflows,
 			})
 			cancel()
 		}
@@ -292,6 +351,9 @@ func (c *Coordinator) currentDispatcher() worker.Dispatcher {
 
 // Upstream returns the workflow machine; results from workers are applied to it.
 func (c *Coordinator) Upstream() machine.Machine { return c.cfg.Upstream }
+
+// ActivityStore returns the downstream activity store.
+func (c *Coordinator) ActivityStore() *worker.ActivityStore { return c.activityStore }
 
 // RegisterFlow declares a flow so it is visible through the flows API even
 // before any run has started. Starting a workflow registers its flow as well.
@@ -334,7 +396,6 @@ func (c *Coordinator) StartWorkflow(ctx context.Context, req flowstore.StartWork
 	}
 	wf, ok := res.(*flow.WorkflowInstance)
 	if !ok {
-		// Fallback to local store
 		if localWf, exists := c.flowStore.GetWorkflow(req.WorkflowID); exists {
 			return localWf, nil
 		}
@@ -343,12 +404,61 @@ func (c *Coordinator) StartWorkflow(ctx context.Context, req flowstore.StartWork
 	return wf, nil
 }
 
-// GetWorkflow retrieves a workflow by ID from the local store.
+// UpsertSchedule registers or updates a recurring cron/interval workflow schedule.
+func (c *Coordinator) UpsertSchedule(ctx context.Context, sched flow.Schedule) (*flow.Schedule, error) {
+	_ = c.RegisterFlow(sched.Definition)
+	res, err := c.cfg.Upstream.Apply(ctx, flowstore.CmdUpsertSchedule, flowstore.UpsertScheduleRequest{
+		Schedule: sched,
+		Now:      time.Now().UTC(),
+	})
+	if err != nil {
+		return nil, err
+	}
+	if out, ok := res.(*flow.Schedule); ok {
+		return out, nil
+	}
+	if local, ok := c.flowStore.GetSchedule(sched.ScheduleID); ok {
+		return local, nil
+	}
+	return nil, fmt.Errorf("unexpected upsert schedule response: %T", res)
+}
+
+// DeleteSchedule removes a recurring schedule by ID.
+func (c *Coordinator) DeleteSchedule(ctx context.Context, scheduleID string) error {
+	_, err := c.cfg.Upstream.Apply(ctx, flowstore.CmdDeleteSchedule, flowstore.DeleteScheduleRequest{
+		ScheduleID: scheduleID,
+	})
+	return err
+}
+
+// GetSchedule retrieves a schedule by ID.
+func (c *Coordinator) GetSchedule(scheduleID string) (*flow.Schedule, bool) {
+	return c.flowStore.GetSchedule(scheduleID)
+}
+
+// ListSchedules returns all registered schedules.
+func (c *Coordinator) ListSchedules() []*flow.Schedule {
+	return c.flowStore.ListSchedules()
+}
+
+// CompactWorkflows evicts terminal workflows matching req from hot memory (archiving them if an Archiver is set).
+func (c *Coordinator) CompactWorkflows(ctx context.Context, req flowstore.CompactWorkflowsRequest) (flowstore.CompactWorkflowsResponse, error) {
+	res, err := c.cfg.Upstream.Apply(ctx, flowstore.CmdCompactWorkflows, req)
+	if err != nil {
+		return flowstore.CompactWorkflowsResponse{}, err
+	}
+	if out, ok := res.(flowstore.CompactWorkflowsResponse); ok {
+		return out, nil
+	}
+	return flowstore.CompactWorkflowsResponse{}, nil
+}
+
+// GetWorkflow retrieves a workflow by ID from the local store (or cold archive).
 func (c *Coordinator) GetWorkflow(workflowID string) (*flow.WorkflowInstance, bool) {
 	return c.flowStore.GetWorkflow(workflowID)
 }
 
-// ListWorkflows retrieves all workflows from the local store.
+// ListWorkflows retrieves all hot workflows from the local store.
 func (c *Coordinator) ListWorkflows() []*flow.WorkflowInstance {
 	return c.flowStore.ListWorkflows()
 }

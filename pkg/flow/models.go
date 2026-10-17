@@ -58,6 +58,54 @@ const (
 	CodeSignalTimeout = "SIGNAL_TIMEOUT"
 )
 
+// RetryPolicy configures exponential backoff and error-code filtering for step retries.
+type RetryPolicy struct {
+	// InitialInterval is the delay before the first retry. Zero means immediate retry.
+	InitialInterval time.Duration `json:"initial_interval,omitempty"`
+	// BackoffCoefficient multiplies the delay after each retry (defaults to 2.0 when InitialInterval > 0).
+	BackoffCoefficient float64 `json:"backoff_coefficient,omitempty"`
+	// MaxInterval caps the backoff delay (zero means uncapped).
+	MaxInterval time.Duration `json:"max_interval,omitempty"`
+	// NonRetryableErrorCodes lists error codes that fail the step immediately without retrying.
+	NonRetryableErrorCodes []string `json:"non_retryable_error_codes,omitempty"`
+}
+
+// IsNonRetryableCode reports whether code is explicitly listed as non-retryable.
+func (p *RetryPolicy) IsNonRetryableCode(code string) bool {
+	if p == nil || code == "" {
+		return false
+	}
+	for _, c := range p.NonRetryableErrorCodes {
+		if c == code {
+			return true
+		}
+	}
+	return false
+}
+
+// NextDelay computes the backoff delay after the given 1-based attempt number.
+func (p *RetryPolicy) NextDelay(attempt int) time.Duration {
+	if p == nil || p.InitialInterval <= 0 {
+		return 0
+	}
+	coeff := p.BackoffCoefficient
+	if coeff <= 0 {
+		coeff = 2.0
+	}
+	delay := float64(p.InitialInterval)
+	for i := 1; i < attempt; i++ {
+		delay *= coeff
+		if p.MaxInterval > 0 && time.Duration(delay) >= p.MaxInterval {
+			return p.MaxInterval
+		}
+	}
+	d := time.Duration(delay)
+	if p.MaxInterval > 0 && d > p.MaxInterval {
+		return p.MaxInterval
+	}
+	return d
+}
+
 // StepDefinition defines a single activity or task within a workflow.
 type StepDefinition struct {
 	Name string `json:"name"`
@@ -70,6 +118,7 @@ type StepDefinition struct {
 	Delay              time.Duration   `json:"delay,omitempty"`
 	Input              json.RawMessage `json:"input,omitempty"`
 	Retries            int             `json:"retries,omitempty"`
+	RetryPolicy        *RetryPolicy    `json:"retry_policy,omitempty"`
 	Timeout            time.Duration   `json:"timeout,omitempty"`
 	CompensatingAction string          `json:"compensating_action,omitempty"`
 	DependsOn          []string        `json:"depends_on,omitempty"`
@@ -89,21 +138,26 @@ type StepExecution struct {
 	Signal   string   `json:"signal,omitempty"`
 	// Delay is how long a sleep step sleeps.
 	Delay time.Duration `json:"delay,omitempty"`
-	// WakeAt is when a waiting or sleeping step is due to be resolved by the engine.
-	WakeAt             *time.Time      `json:"wake_at,omitempty"`
-	Status             StepStatus      `json:"status"`
-	Input              json.RawMessage `json:"input,omitempty"`
-	Output             json.RawMessage `json:"output,omitempty"`
+	// WakeAt is when a waiting, sleeping, or backoff-retrying step is due to be resolved by the engine.
+	WakeAt      *time.Time      `json:"wake_at,omitempty"`
+	Status      StepStatus      `json:"status"`
+	Input       json.RawMessage `json:"input,omitempty"`
+	Output      json.RawMessage `json:"output,omitempty"`
+	// Progress holds the latest heartbeat checkpoint reported by a running activity.
+	Progress           json.RawMessage `json:"progress,omitempty"`
 	Error              string          `json:"error,omitempty"`
 	ErrorCode          string          `json:"error_code,omitempty"`
 	Attempt            int             `json:"attempt"`
+	CompensationAttempt int            `json:"compensation_attempt,omitempty"`
 	MaxRetries         int             `json:"max_retries"`
+	RetryPolicy        *RetryPolicy    `json:"retry_policy,omitempty"`
 	Timeout            time.Duration   `json:"timeout,omitempty"`
 	CompensatingAction string          `json:"compensating_action,omitempty"`
 	DependsOn          []string        `json:"depends_on,omitempty"`
 	StartedAt          *time.Time      `json:"started_at,omitempty"`
 	CompletedAt        *time.Time      `json:"completed_at,omitempty"`
 	CompensatedAt      *time.Time      `json:"compensated_at,omitempty"`
+	DispatchedVersion  uint64          `json:"dispatched_version,omitempty"`
 }
 
 // Event records a state transition or milestone in the workflow audit log.
@@ -161,6 +215,15 @@ func NewWorkflowInstance(workflowID, runID string, def WorkflowDefinition, input
 			stepInput = input
 		}
 
+		var rp *RetryPolicy
+		if s.RetryPolicy != nil {
+			cp := *s.RetryPolicy
+			if len(s.RetryPolicy.NonRetryableErrorCodes) > 0 {
+				cp.NonRetryableErrorCodes = append([]string(nil), s.RetryPolicy.NonRetryableErrorCodes...)
+			}
+			rp = &cp
+		}
+
 		steps[s.Name] = &StepExecution{
 			Name:               s.Name,
 			Kind:               s.Kind,
@@ -170,6 +233,7 @@ func NewWorkflowInstance(workflowID, runID string, def WorkflowDefinition, input
 			Status:             StepStatusPending,
 			Input:              stepInput,
 			MaxRetries:         s.Retries,
+			RetryPolicy:        rp,
 			Timeout:            s.Timeout,
 			CompensatingAction: s.CompensatingAction,
 			DependsOn:          append([]string(nil), s.DependsOn...),
@@ -222,7 +286,8 @@ func (w *WorkflowInstance) RecordEvent(eventType, stepName, message string, payl
 	w.UpdatedAt = time.Now().UTC()
 }
 
-// NextReadySteps returns all steps that are currently pending and have all their dependencies satisfied.
+// NextReadySteps returns all steps that are currently pending (and not parked on retry backoff)
+// and have all their dependencies satisfied.
 func (w *WorkflowInstance) NextReadySteps() []*StepExecution {
 	if w.Status != StatusRunning {
 		return nil
@@ -231,7 +296,7 @@ func (w *WorkflowInstance) NextReadySteps() []*StepExecution {
 	var ready []*StepExecution
 	for _, stepName := range w.StepOrder {
 		step := w.Steps[stepName]
-		if step == nil || step.Status != StepStatusPending {
+		if step == nil || step.Status != StepStatusPending || step.WakeAt != nil {
 			continue
 		}
 

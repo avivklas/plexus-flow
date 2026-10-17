@@ -217,3 +217,101 @@ func (c *Client) GetClusterStatus(ctx context.Context) (*ClusterStatusResponse, 
 	}
 	return &status, nil
 }
+
+// UpsertSchedule registers or updates a recurring workflow schedule.
+func (c *Client) UpsertSchedule(ctx context.Context, sched flow.Schedule) (*flow.Schedule, error) {
+	b, err := json.Marshal(sched)
+	if err != nil {
+		return nil, err
+	}
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/api/v1/schedules", bytes.NewReader(b))
+	if err != nil {
+		return nil, err
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.httpClient.Do(httpReq)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
+		var errResp ErrorResponse
+		_ = json.NewDecoder(resp.Body).Decode(&errResp)
+		return nil, fmt.Errorf("upsert schedule failed (status %d): %s", resp.StatusCode, errResp.Error)
+	}
+	var out flow.Schedule
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// ListSchedules lists all registered recurring workflow schedules.
+func (c *Client) ListSchedules(ctx context.Context) ([]*flow.Schedule, error) {
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/api/v1/schedules", nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := c.httpClient.Do(httpReq)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("list schedules failed with status %d", resp.StatusCode)
+	}
+	var out []*flow.Schedule
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// DeleteSchedule deletes a recurring workflow schedule by ID.
+func (c *Client) DeleteSchedule(ctx context.Context, scheduleID string) error {
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodDelete, c.baseURL+"/api/v1/schedules/"+scheduleID, nil)
+	if err != nil {
+		return err
+	}
+	resp, err := c.httpClient.Do(httpReq)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound {
+		return flow.ErrScheduleNotFound
+	}
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("delete schedule failed with status %d", resp.StatusCode)
+	}
+	return nil
+}
+
+// CompactWorkflows triggers eviction/archival of terminal workflows via the HTTP API.
+func (c *Client) CompactWorkflows(ctx context.Context, req flowstore.CompactWorkflowsRequest) (*flowstore.CompactWorkflowsResponse, error) {
+	b, err := json.Marshal(req)
+	if err != nil {
+		return nil, err
+	}
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/api/v1/workflows/compact", bytes.NewReader(b))
+	if err != nil {
+		return nil, err
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	resp, err := c.httpClient.Do(httpReq)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("compact workflows failed with status %d", resp.StatusCode)
+	}
+	var out flowstore.CompactWorkflowsResponse
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+

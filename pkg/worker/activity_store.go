@@ -49,6 +49,13 @@ func (s *ActivityStore) SetListeners(
 	s.onCompensate = onCompensate
 }
 
+// TaskCount returns the number of retained activity and compensation task records in the store.
+func (s *ActivityStore) TaskCount() int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return len(s.tasks) + len(s.compensations)
+}
+
 func (s *ActivityStore) registerHandlers() {
 	r := s.Router()
 
@@ -90,6 +97,27 @@ func (s *ActivityStore) registerHandlers() {
 		}
 
 		return "COMPENSATION_DISPATCHED", nil
+	})
+
+	// 3. Prune Workflow Activities (frees memory once a workflow reaches a terminal state)
+	store.HandleTyped(r, CmdPruneWorkflowActivities, func(ctx context.Context, req PruneWorkflowActivitiesRequest) (int, error) {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+
+		pruned := 0
+		for k, t := range s.tasks {
+			if t.WorkflowID == req.WorkflowID {
+				delete(s.tasks, k)
+				pruned++
+			}
+		}
+		for k, c := range s.compensations {
+			if c.WorkflowID == req.WorkflowID {
+				delete(s.compensations, k)
+				pruned++
+			}
+		}
+		return pruned, nil
 	})
 }
 

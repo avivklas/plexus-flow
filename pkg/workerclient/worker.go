@@ -50,8 +50,10 @@ type TaskInfo struct {
 	StepName          string
 	Activity          string
 	Attempt           int
+	LastProgress      json.RawMessage
 	DependencyOutputs map[string]json.RawMessage
 	Metadata          map[string]string
+	reportProgress    func(json.RawMessage) error
 }
 
 type taskKey struct{}
@@ -60,6 +62,17 @@ type taskKey struct{}
 func TaskFromContext(ctx context.Context) (TaskInfo, bool) {
 	t, ok := ctx.Value(taskKey{}).(TaskInfo)
 	return t, ok
+}
+
+// ReportProgress sends a heartbeat checkpoint for the currently executing activity task.
+// If the worker crashes or the task is retried, the next attempt receives this checkpoint
+// in TaskInfo.LastProgress.
+func ReportProgress(ctx context.Context, progress json.RawMessage) error {
+	t, ok := TaskFromContext(ctx)
+	if !ok || t.reportProgress == nil {
+		return nil
+	}
+	return t.reportProgress(progress)
 }
 
 // Worker connects to plexus-flow and executes activities.
@@ -205,7 +218,7 @@ func (w *Worker) session(ctx context.Context, client workerpb.WorkerServiceClien
 					cancelsMu.Unlock()
 					tcancel()
 				}()
-				res := w.execute(tctx, t)
+				res := w.execute(tctx, t, send)
 				if tctx.Err() != nil && sctx.Err() == nil {
 					return // cancelled by the server, which no longer wants the result
 				}
@@ -224,7 +237,7 @@ func (w *Worker) session(ctx context.Context, client workerpb.WorkerServiceClien
 	}
 }
 
-func (w *Worker) execute(ctx context.Context, t *workerpb.Task) (res *workerpb.TaskResult) {
+func (w *Worker) execute(ctx context.Context, t *workerpb.Task, send func(*workerpb.WorkerMessage) error) (res *workerpb.TaskResult) {
 	res = &workerpb.TaskResult{TaskId: t.GetTaskId()}
 	fail := func(code, msg string, retryable bool) *workerpb.TaskResult {
 		res.Outcome = &workerpb.TaskResult_Failure{Failure: &workerpb.Failure{Code: code, Message: msg, Retryable: retryable}}
@@ -247,7 +260,20 @@ func (w *Worker) execute(ctx context.Context, t *workerpb.Task) (res *workerpb.T
 	ctx = context.WithValue(ctx, taskKey{}, TaskInfo{
 		TaskID: t.GetTaskId(), Compensation: t.GetKind() == workerpb.TaskKind_TASK_KIND_COMPENSATION,
 		WorkflowID: t.GetWorkflowId(), RunID: t.GetRunId(), StepName: t.GetStepName(), Activity: t.GetActivity(),
-		Attempt: int(t.GetAttempt()), DependencyOutputs: deps, Metadata: t.GetMetadata(),
+		Attempt: int(t.GetAttempt()), LastProgress: t.GetLastProgress(), DependencyOutputs: deps, Metadata: t.GetMetadata(),
+		reportProgress: func(progress json.RawMessage) error {
+			if send == nil {
+				return nil
+			}
+			return send(&workerpb.WorkerMessage{
+				Message: &workerpb.WorkerMessage_Heartbeat{
+					Heartbeat: &workerpb.Heartbeat{
+						TaskId:   t.GetTaskId(),
+						Progress: append([]byte(nil), progress...),
+					},
+				},
+			})
+		},
 	})
 	if ms := t.GetTimeoutMs(); ms > 0 {
 		var c context.CancelFunc

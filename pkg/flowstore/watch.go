@@ -154,6 +154,9 @@ func handle[Req any, Resp any](s *Store, r *store.Router, typ store.CommandType,
 			s.mu.Lock()
 			if wf, ok := s.workflows[id]; ok {
 				wf.Version++
+				if wfResp, ok := any(resp).(*flow.WorkflowInstance); ok && wfResp != nil {
+					wfResp.Version = wf.Version
+				}
 				s.publishLocked(wf)
 			}
 			s.mu.Unlock()

@@ -35,6 +35,12 @@ type FlowReader interface {
 	ListWorkflows() []*flow.WorkflowInstance
 }
 
+// ProgressStore is an optional extension on FlowReader for fast local progress reads/writes.
+type ProgressStore interface {
+	UpdateStepProgressLocal(workflowID, stepName string, progress json.RawMessage)
+	StepProgress(workflowID, stepName string) json.RawMessage
+}
+
 // Options configure a Broker.
 type Options struct {
 	// Applier proposes step results to the workflow machine. Required.
@@ -82,6 +88,7 @@ type delivery struct {
 	step       string
 	activity   string
 	input      json.RawMessage
+	progress   json.RawMessage
 	deps       map[string]json.RawMessage
 	meta       map[string]string
 	attempt    int
@@ -142,9 +149,15 @@ func (b *Broker) isLeader() bool { return b.opt.IsLeader == nil || b.opt.IsLeade
 
 // DispatchActivity implements worker.Dispatcher.
 func (b *Broker) DispatchActivity(t worker.ActivityTask) {
+	prog := t.LastProgress
+	if len(prog) == 0 {
+		if ps, ok := b.opt.Flows.(ProgressStore); ok {
+			prog = ps.StepProgress(t.WorkflowID, t.StepName)
+		}
+	}
 	b.enqueue(&delivery{
 		kind: workerpb.TaskKind_TASK_KIND_ACTIVITY, workflowID: t.WorkflowID, runID: t.RunID, step: t.StepName,
-		activity: t.Activity, input: t.Input, deps: t.DependencyOutputs, meta: t.Metadata,
+		activity: t.Activity, input: t.Input, progress: prog, deps: t.DependencyOutputs, meta: t.Metadata,
 		attempt: t.Attempt + 1, retries: t.Retries, timeout: t.Timeout,
 	}, func() { b.runLocalActivity(t) })
 }
@@ -284,7 +297,7 @@ func (b *Broker) sendTaskLocked(s *Session, d *delivery) bool {
 	msg := &workerpb.ServerMessage{Message: &workerpb.ServerMessage_Task{Task: &workerpb.Task{
 		TaskId: d.id, Kind: d.kind, WorkflowId: d.workflowID, RunId: d.runID, StepName: d.step,
 		Activity: d.activity, Input: d.input, DependencyOutputs: deps, Metadata: d.meta,
-		Attempt: int32(d.attempt), TimeoutMs: d.timeout.Milliseconds(),
+		Attempt: int32(d.attempt), TimeoutMs: d.timeout.Milliseconds(), LastProgress: d.progress,
 	}}}
 	if !s.sendLocked(msg) {
 		return false
@@ -307,10 +320,11 @@ func (b *Broker) Recover() {
 		}
 		for name, st := range wf.Steps {
 			switch {
-			case wf.Status == flow.StatusRunning && st.Status == flow.StepStatusRunning:
+			case wf.Status == flow.StatusRunning && st.Status == flow.StepStatusRunning && st.IsActivity():
 				found = append(found, &delivery{
 					kind: workerpb.TaskKind_TASK_KIND_ACTIVITY, workflowID: wf.WorkflowID, runID: wf.RunID, step: name,
-					activity: st.Activity, input: st.Input, meta: wf.Metadata, attempt: st.Attempt, retries: st.MaxRetries, timeout: st.Timeout,
+					activity: st.Activity, input: st.Input, progress: st.Progress, meta: wf.Metadata,
+					attempt: st.Attempt, retries: st.MaxRetries, timeout: st.Timeout,
 					deps: depOutputs(wf, st),
 				})
 			case wf.Status == flow.StatusCompensating && st.Status == flow.StepStatusCompensating:

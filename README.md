@@ -185,11 +185,25 @@ final = wait_for("http://127.0.0.1:8080", "order-1001")
 
 | Endpoint | Description |
 |---|---|
-| `POST /api/v1/workflows/start` | Start a new workflow instance |
-| `GET /api/v1/workflows/{id}` | Get workflow state (`POST .../signal`, `POST .../cancel`) |
+| `POST /api/v1/workflows/start` | Start a new workflow instance (transparently forwarded to leader if sent to a follower) |
+| `GET /api/v1/workflows/{id}` | Get workflow state from hot memory or cold archive (`POST .../signal`, `POST .../cancel`) |
 | `GET /api/v1/workflows/{id}/watch` | SSE stream of state changes until terminal status |
+| `POST /api/v1/workflows/compact` | Archive terminal workflows to cold disk storage and compact hot Raft memory |
+| `GET /api/v1/schedules` / `POST /api/v1/schedules` | List or upsert durable cron (`*/5 * * * *`) & interval (`@every 10s`) schedules |
+| `DELETE /api/v1/schedules/{id}` | Delete a durable schedule |
 | `GET /api/v1/flows` / `GET /api/v1/flows/{name}` | List known flows and inspect DAG + compensation edges |
 | `GET /api/v1/traces/{workflowID}` | Execution trace overlaid on the flow graph |
+
+---
+
+## Production Execution Primitives
+
+- **Exponential Retry Policy & Error Filtering (`flow.RetryPolicy`):** Per-step `InitialInterval`, `BackoffCoefficient`, `MaxInterval`, and `NonRetryableErrorCodes` (immediately triggering failure/Saga compensation without burning retries on `4xx` or validation errors).
+- **Heartbeat Progress Checkpointing (`workerclient.ReportProgress`):** Long-running remote workers can stream arbitrary JSON progress checkpoints inside gRPC heartbeats. If a worker crashes mid-flight, the replacement worker receives `TaskInfo.LastProgress` to resume from the last checkpoint instead of restarting from zero.
+- **Durable Cron & Interval Schedules (`flow.Schedule`):** Built-in Raft-replicated cron (`0 * * * *`) and interval (`@every 5m`, `@daily`) schedules with overlap policies (`Skip`, `Allow`, `CancelPrevious`).
+- **$O(\log N)$ Min-Heap Timers & Batched Firing:** Sleep steps, wait-signal timeouts, and retry backoff timers are indexed in an $O(\log N)$ min-heap and resolved in a single batched `CmdFireTimers` Raft commit per tick.
+- **Multi-Raft Horizontal Sharding (`graphflow.ShardedCoordinator`):** Partition workflows across $N$ independent Raft Graph shards by `WorkflowID` (FNV-1a hashing) to scale consensus write throughput linearly.
+- **Tiered Cold Storage Archival (`flowstore.FileArchiver`):** Terminal workflows are automatically pruned from the downstream `ActivityStore` and can be compacted out of the hot `FlowStore` into cold disk archives, with `GetWorkflow` and `GetHistory` transparently falling back to cold storage on cache miss.
 
 ---
 
@@ -212,7 +226,7 @@ flowchart LR
 
 1. **The Dual-Write Problem (Update DB + Publish to Queue)**
    - *Classic failure:* A service commits a state change to Postgres, then crashes before publishing the next event to Kafka—leaving the workflow permanently stuck (or publishes first and crashes before the DB commit, causing phantom tasks).
-   - *How `plexus-flow` solves it:* There is no separate database and message broker. An upstream **Workflow Raft Machine** (`FlowStore`) and a downstream **Activity Raft Machine** (`ActivityStore`) are wired via a **Raft Graph Pipe**. The Raft log *is* both the state store and the durable event log. Every committed workflow transition deterministically triggers the graph pipe to emit the next activity command.
+   - *How `plexus-flow` solves it:* There is no separate database and message broker. An upstream **Workflow Raft Machine** (`FlowStore`) and a downstream **Activity Raft Machine** (`ActivityStore`) are wired via a **Raft Graph Pipe**. The Raft log *is* both the state store and the durable event log. Every committed workflow transition atomically advances ready downstream steps and deterministically triggers the graph pipe to emit the next activity command in a single upstream Raft commit.
 
 2. **Duplicate Dispatch on Leader Failover (Exactly-Once State Transitions)**
    - *Classic failure:* A coordinator node dispatches a task, crashes mid-flight, and the new leader re-processes the uncommitted state—dispatching the same task twice.
@@ -220,17 +234,17 @@ flowchart LR
      $$\text{IdempotencyKey} = \text{UpstreamID}:\text{Term}:\text{Index}:\text{Seq}$$
      Before `ActivityStore` records or dispatches any task, an embedded `dedup.Store` interceptor verifies this key inside the downstream Raft machine. Even if a leader crashes and the new leader replays the pipe, duplicates are deterministically rejected at consensus level.
 
-3. **Split-Brain & Stale Reads**
+3. **Split-Brain, Stale Reads & Follower Routing**
    - *Classic failure:* A network partition isolates an old leader or a replica serves stale workflow state, causing double execution or premature step advancement.
-   - *How `plexus-flow` solves it:* All workflow mutations require a Raft quorum commit, and task dispatching is strictly gated by `IsLeader()`. Through Plexus's quorum-commit + local-apply synchronization, once a mutation returns, subsequent local memory reads on that node are strictly consistent without extra network round-trips.
+   - *How `plexus-flow` solves it:* All workflow mutations require a Raft quorum commit, and task dispatching is strictly gated by `IsLeader()`. Write requests arriving at a follower HTTP node are transparently proxied to the active Raft leader. Through Plexus's quorum-commit + local-apply synchronization, once a mutation returns, subsequent local memory reads on that node are strictly consistent without extra network round-trips.
 
 4. **Zombie Workers, Crash Mid-Activity & Stale Completions**
    - *Classic failure:* A worker pulls a task and freezes (GC pause, network blackhole, OOM). Another worker picks up the timed-out task, and both eventually report back—corrupting workflow state.
-   - *How `plexus-flow` solves it:* Workers maintain a liveness session via periodic heartbeats (`HeartbeatInterval`, default `2s`) and per-step execution deadlines. If a worker goes silent for 3 intervals, the broker marks it `WORKER_LOST` and redelivers or retries the task. When theUpstream Workflow FSM receives a completion/failure proposal, it validates the current `StepStatus` and `Attempt`—stale completions from zombie workers are safely ignored, and superseded in-flight tasks receive an active cancellation signal over their gRPC stream.
+   - *How `plexus-flow` solves it:* Workers maintain a liveness session via periodic heartbeats (`HeartbeatInterval`, default `2s`) with optional progress checkpoints (`ReportProgress`) and per-step execution deadlines. If a worker goes silent for 3 intervals, the broker marks it `WORKER_LOST` and redelivers or retries the task with the last checkpointed progress attached. When the Upstream Workflow FSM receives a completion/failure proposal, it validates the current `StepStatus` and `Attempt`—stale completions from zombie workers are safely ignored, and superseded in-flight tasks receive an active cancellation signal over their gRPC stream.
 
 5. **Partial Failure Across Distributed Steps (Distributed Transactions without 2PC)**
    - *Classic failure:* Two-Phase Commit (2PC) holds cross-service locks and blocks availability whenever a single participant is slow or unreachable.
-   - *How `plexus-flow` solves it:* First-class **LIFO Saga state machine**. When a step exhausts its retries, the workflow transitions to `COMPENSATING`. The state machine walks the completed DAG nodes in reverse completion order, piping `activity.compensate` commands through the same Raft Graph with automatic retries until the workflow reaches `COMPENSATED`.
+   - *How `plexus-flow` solves it:* First-class **LIFO Saga state machine**. When a step exhausts its retries (or hits a non-retryable error code), the workflow transitions to `COMPENSATING`. The state machine atomically walks the completed DAG nodes in reverse completion order, piping `activity.compensate` commands through the same Raft Graph with automatic backoff retries until the workflow reaches `COMPENSATED`.
 
 ### Architectural Trade-offs (What We Optimize For—and What We Don't)
 
@@ -238,10 +252,10 @@ No distributed system escapes the CAP and PACELC theorems. `plexus-flow` makes d
 
 | Trade-off | What `plexus-flow` Chooses | Why & When It Matters |
 |---|---|---|
-| **Write Throughput Ceiling vs. Zero-Infra Simplicity** | **Single Raft Group Consensus** per workflow machine (scales vertically and across a 3–5 node quorum, not horizontally sharded like Cassandra). | Every step transition writes a Raft log entry (`2 * Steps + 1` commits per workflow). Ideal for hundreds to low-thousands of state transitions/sec with sub-millisecond local disk I/O—not designed for millions of telemetry events/sec unless sharded across multiple independent `plexus-flow` clusters. |
+| **Consensus Write Path vs. Zero-Infra Simplicity** | **Single-Commit Atomic Dispatch + Multi-Raft Sharding (`ShardedCoordinator`).** | Atomic step advancement requires just `Steps + 1` upstream Raft commits per workflow (plus batched $O(\log N)$ timer commits). A single Raft group handles thousands of transitions/sec with sub-millisecond local disk I/O, and `ShardedCoordinator` partitions workflows across $N$ independent Raft groups when horizontal write scaling is needed. |
 | **CP (Consistency over Availability) under Partition** | **Strict Quorum (CP):** Minority partitions halt workflow advancement until quorum is restored. | Prevents split-brain double-charging or corrupted Saga state. Requires 3 or 5 nodes for high availability; if a majority of consensus nodes fail simultaneously, workflows pause safely rather than diverge. |
-| **Memory-Resident State + Snapshots vs. Disk-Backed Query Engine** | **In-Memory FSM with Raft Log & Snapshots.** | Active and recent workflows live in memory for microsecond DAG evaluation and zero-latency SSE streaming. If you retain millions of historical completed workflows forever without archival/compaction, memory usage grows proportionally. |
-| **Engine-Side EOS vs. External Side-Effects** | **Consensus-Level Dispatch EOS + At-Least-Once Worker Execution** on crash. | The Raft Graph guarantees a step transition emits a task *exactly once*. However, if a remote worker calls an external API (e.g., Stripe) and crashes *one nanosecond before* acknowledging completion to `plexus-flow`, the task will be redelivered. External side-effect handlers should still pass the provided deterministic task key (`WorkflowID:RunID:Step:Attempt`) to external APIs. |
+| **Hot In-Memory FSM + Cold Disk Archival** | **In-Memory Active FSM with Tiered Cold Compaction (`FileArchiver`).** | Active workflows live in memory for microsecond DAG evaluation and zero-latency SSE streaming, while terminal workflows are automatically pruned from `ActivityStore` and compacted to cold disk storage (`CmdCompactWorkflows`) with transparent read fallback. |
+| **Engine-Side EOS vs. External Side-Effects** | **Consensus-Level Dispatch EOS + Progress-Checkpointed Worker Execution** on crash. | The Raft Graph guarantees a step transition emits a task *exactly once*. If a remote worker calls an external API and crashes *one nanosecond before* acknowledging completion, the task is redelivered with its last `Heartbeat` progress checkpoint (`LastProgress`). External side-effect handlers should still pass the deterministic task key (`WorkflowID:RunID:Step:Attempt`) or checkpoint idempotency tokens. |
 
 ---
 

@@ -68,9 +68,30 @@ func (s *Session) Out() <-chan *workerpb.ServerMessage { return s.out }
 
 // Heartbeat records that the worker is alive.
 func (s *Session) Heartbeat() {
-	s.b.mu.Lock()
+	s.HeartbeatWithProgress(nil)
+}
+
+// HeartbeatWithProgress records worker liveness and optional activity progress checkpoint.
+func (s *Session) HeartbeatWithProgress(hb *workerpb.Heartbeat) {
+	b := s.b
+	b.mu.Lock()
 	s.lastSeen = time.Now()
-	s.b.mu.Unlock()
+	var wfID, step string
+	var prog []byte
+	if hb != nil && hb.GetTaskId() != "" && len(hb.GetProgress()) > 0 {
+		if d, ok := s.inflight[hb.GetTaskId()]; ok {
+			d.progress = append(d.progress[:0], hb.GetProgress()...)
+			wfID, step = d.workflowID, d.step
+			prog = append([]byte(nil), d.progress...)
+		}
+	}
+	b.mu.Unlock()
+
+	if wfID != "" && len(prog) > 0 {
+		if ps, ok := b.opt.Flows.(ProgressStore); ok {
+			ps.UpdateStepProgressLocal(wfID, step, prog)
+		}
+	}
 }
 
 // Result handles the outcome of a task.

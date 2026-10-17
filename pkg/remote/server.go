@@ -65,7 +65,7 @@ func (s *Server) Connect(stream grpc.BidiStreamingServer[workerpb.WorkerMessage,
 			}
 			switch x := m.Message.(type) {
 			case *workerpb.WorkerMessage_Heartbeat:
-				sess.Heartbeat()
+				sess.HeartbeatWithProgress(x.Heartbeat)
 			case *workerpb.WorkerMessage_Result:
 				if err := sess.Result(x.Result); err != nil {
 					recvErr <- status.Error(codes.InvalidArgument, err.Error())
