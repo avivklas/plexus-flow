@@ -3,7 +3,7 @@ module github.com/avivklas/plexus-flow
 go 1.27.0
 
 require (
-	github.com/avivklas/plexus v0.2.0
+	github.com/avivklas/plexus v0.3.0
 	github.com/hashicorp/raft v1.8.0
 	google.golang.org/grpc v1.82.1
 	google.golang.org/protobuf v1.36.12
