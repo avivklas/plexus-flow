@@ -16,6 +16,7 @@ import (
 	"github.com/avivklas/plexus-flow/pkg/graphflow"
 	"github.com/avivklas/plexus-flow/pkg/worker"
 	"github.com/avivklas/plexus-flow/pkg/workerclient"
+	"github.com/avivklas/plexus/pkg/store"
 )
 
 // 1. Verify single-commit atomic step advancement (Version = 2 for a 1-step workflow:
@@ -456,3 +457,283 @@ func TestFollowerToLeaderHTTPForwarding(t *testing.T) {
 	// Verify the workflow executed on the leader
 	waitStatus(t, leaderCoord, "wf-forwarded-1", flow.StatusCompleted)
 }
+
+// 9. Verify Zombie Worker Attempt Fencing: if Attempt 1 times out or fails and Attempt 2 is running,
+// a late completion or failure from Attempt 1 is rejected and cannot corrupt the running step.
+func TestZombieWorkerAttemptFencing(t *testing.T) {
+	st := flowstore.New()
+	t0 := time.Date(2026, 10, 18, 10, 0, 0, 0, time.UTC)
+
+	def := flow.WorkflowDefinition{
+		Name: "fenced-flow",
+		Steps: []flow.StepDefinition{
+			{Name: "charge", Activity: "charge-card", Retries: 2},
+		},
+	}
+
+	// Start and dispatch Attempt 1
+	cmdStart, _ := store.NewCommand(flowstore.CmdStartWorkflow, flowstore.StartWorkflowRequest{
+		WorkflowID: "wf-fence",
+		RunID:      "run-1",
+		Definition: def,
+		At:         t0,
+	})
+	if _, err := st.Router().Execute(context.Background(), cmdStart); err != nil {
+		t.Fatal(err)
+	}
+	cmdDisp1, _ := store.NewCommand(flowstore.CmdDispatchStep, flowstore.DispatchStepRequest{
+		WorkflowID: "wf-fence",
+		StepName:   "charge",
+		At:         t0.Add(time.Second),
+	})
+	if _, err := st.Router().Execute(context.Background(), cmdDisp1); err != nil {
+		t.Fatal(err)
+	}
+
+	// Attempt 1 times out and schedules retry, then Attempt 2 is dispatched (Attempt == 2)
+	cmdFail1, _ := store.NewCommand(flowstore.CmdFailStep, flowstore.FailStepRequest{
+		WorkflowID: "wf-fence",
+		RunID:      "run-1",
+		StepName:   "charge",
+		Attempt:    1,
+		Error:      "worker-1 lease expired",
+		Retryable:  true,
+		At:         t0.Add(2 * time.Second),
+	})
+	if _, err := st.Router().Execute(context.Background(), cmdFail1); err != nil {
+		t.Fatal(err)
+	}
+	cmdDisp2, _ := store.NewCommand(flowstore.CmdDispatchStep, flowstore.DispatchStepRequest{
+		WorkflowID: "wf-fence",
+		StepName:   "charge",
+		At:         t0.Add(3 * time.Second),
+	})
+	if _, err := st.Router().Execute(context.Background(), cmdDisp2); err != nil {
+		t.Fatal(err)
+	}
+
+	wf, _ := st.GetWorkflow("wf-fence")
+	if wf.Steps["charge"].Attempt != 2 || wf.Steps["charge"].Status != flow.StepStatusRunning {
+		t.Fatalf("expected step running on Attempt 2, got attempt=%d status=%s", wf.Steps["charge"].Attempt, wf.Steps["charge"].Status)
+	}
+
+	// Now Zombie Worker 1 wakes up from a GC pause and reports a stale completion for Attempt 1!
+	cmdZombieComplete, _ := store.NewCommand(flowstore.CmdCompleteStep, flowstore.CompleteStepRequest{
+		WorkflowID: "wf-fence",
+		RunID:      "run-1",
+		StepName:   "charge",
+		Attempt:    1, // Stale attempt!
+		Output:     json.RawMessage(`{"zombie":true}`),
+		At:         t0.Add(4 * time.Second),
+	})
+	if _, err := st.Router().Execute(context.Background(), cmdZombieComplete); err != nil {
+		t.Fatal(err)
+	}
+
+	wf, _ = st.GetWorkflow("wf-fence")
+	if wf.Status != flow.StatusRunning || wf.Steps["charge"].Status != flow.StepStatusRunning {
+		t.Fatalf("zombie completion from Attempt 1 must be fenced out! got wf=%s step=%s", wf.Status, wf.Steps["charge"].Status)
+	}
+
+	// Now Worker 2 completes Attempt 2 legitimately
+	cmdValidComplete, _ := store.NewCommand(flowstore.CmdCompleteStep, flowstore.CompleteStepRequest{
+		WorkflowID: "wf-fence",
+		RunID:      "run-1",
+		StepName:   "charge",
+		Attempt:    2,
+		Output:     json.RawMessage(`{"valid":true}`),
+		At:         t0.Add(5 * time.Second),
+	})
+	if _, err := st.Router().Execute(context.Background(), cmdValidComplete); err != nil {
+		t.Fatal(err)
+	}
+
+	wf, _ = st.GetWorkflow("wf-fence")
+	if wf.Status != flow.StatusCompleted || string(wf.Steps["charge"].Output) != `{"valid":true}` {
+		t.Fatalf("expected Attempt 2 completion to succeed, got status=%s output=%s", wf.Status, string(wf.Steps["charge"].Output))
+	}
+}
+
+// 10. Verify Declarative Conditional Branching (When predicates) without Replay Determinism Bugs,
+// plus RegisterTyped[In, Out] strongly-typed Go activity registration.
+func TestConditionalWhenBranchingAndTypedActivities(t *testing.T) {
+	type OrderReq struct {
+		Amount float64 `json:"amount"`
+		Tier   string  `json:"tier"`
+	}
+	type RiskResp struct {
+		Score string `json:"score"`
+	}
+
+	reg := worker.NewRegistry()
+	var vipExecuted, fraudReviewExecuted, standardShipExecuted atomic.Int32
+
+	worker.RegisterTyped(reg, "assess-risk", func(ctx context.Context, in OrderReq) (RiskResp, error) {
+		if in.Amount > 1000 {
+			return RiskResp{Score: "high"}, nil
+		}
+		return RiskResp{Score: "low"}, nil
+	})
+	worker.RegisterTyped(reg, "manual-fraud-review", func(ctx context.Context, in OrderReq) (map[string]bool, error) {
+		fraudReviewExecuted.Add(1)
+		return map[string]bool{"approved": true}, nil
+	})
+	worker.RegisterTyped(reg, "vip-concierge", func(ctx context.Context, in OrderReq) (map[string]bool, error) {
+		vipExecuted.Add(1)
+		return map[string]bool{"vip_notified": true}, nil
+	})
+	worker.RegisterTyped(reg, "ship-order", func(ctx context.Context, in OrderReq) (map[string]bool, error) {
+		standardShipExecuted.Add(1)
+		return map[string]bool{"shipped": true}, nil
+	})
+
+	coord, err := graphflow.NewEmbeddedCoordinator(reg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer coord.Close()
+
+	def := flow.WorkflowDefinition{
+		Name: "conditional-checkout",
+		Steps: []flow.StepDefinition{
+			{Name: "risk", Activity: "assess-risk"},
+			{
+				Name:      "fraud-review",
+				Activity:  "manual-fraud-review",
+				DependsOn: []string{"risk"},
+				When: &flow.Condition{
+					Source: "risk",
+					Field:  "score",
+					Op:     "eq",
+					Value:  json.RawMessage(`"high"`),
+				},
+			},
+			{
+				Name:      "vip-gift",
+				Activity:  "vip-concierge",
+				DependsOn: []string{"risk"},
+				When: &flow.Condition{
+					Source: "input",
+					Field:  "tier",
+					Op:     "eq",
+					Value:  json.RawMessage(`"platinum"`),
+				},
+			},
+			{
+				Name:      "ship",
+				Activity:  "ship-order",
+				DependsOn: []string{"fraud-review", "vip-gift"},
+			},
+		},
+	}
+
+	// Run a low-risk ($50), platinum-tier order:
+	// - "fraud-review" should be SKIPPED (risk.score == "low" != "high")
+	// - "vip-gift" should RUN and COMPLETE (input.tier == "platinum")
+	// - "ship" should RUN and COMPLETE once both upstream branches resolve (one skipped, one completed)
+	_, err = coord.StartWorkflow(context.Background(), flowstore.StartWorkflowRequest{
+		WorkflowID: "wf-branch-1",
+		Definition: def,
+		Input:      json.RawMessage(`{"amount":50,"tier":"platinum"}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	final := waitStatus(t, coord, "wf-branch-1", flow.StatusCompleted)
+	if final.Steps["fraud-review"].Status != flow.StepStatusSkipped {
+		t.Fatalf("expected fraud-review to be SKIPPED, got %s", final.Steps["fraud-review"].Status)
+	}
+	if final.Steps["vip-gift"].Status != flow.StepStatusCompleted || vipExecuted.Load() != 1 {
+		t.Fatalf("expected vip-gift to be COMPLETED, got %s", final.Steps["vip-gift"].Status)
+	}
+	if final.Steps["ship"].Status != flow.StepStatusCompleted || standardShipExecuted.Load() != 1 {
+		t.Fatalf("expected ship to be COMPLETED after conditional branches resolved, got %s", final.Steps["ship"].Status)
+	}
+	if fraudReviewExecuted.Load() != 0 {
+		t.Fatalf("fraud-review activity should never have been invoked")
+	}
+}
+
+// 11. Verify Time-Travel Step Replay and Zero-CDC Faceted Workflow Search via HTTP API & Client SDK.
+func TestStepReplayAndZeroCDCSearchAPI(t *testing.T) {
+	reg := worker.NewRegistry()
+	reg.Register("validate-payload", func(ctx context.Context, in json.RawMessage) (json.RawMessage, error) {
+		return json.RawMessage(`{"validated":true}`), nil
+	})
+	reg.Register("process-payment", func(ctx context.Context, in json.RawMessage) (json.RawMessage, error) {
+		var p struct {
+			CardValid bool `json:"card_valid"`
+		}
+		_ = json.Unmarshal(in, &p)
+		if !p.CardValid {
+			return nil, worker.NonRetryable(worker.WithCode("CARD_DECLINED", errors.New("card declined")))
+		}
+		return json.RawMessage(`{"paid":true}`), nil
+	})
+
+	coord, err := graphflow.NewEmbeddedCoordinator(reg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer coord.Close()
+
+	srv := api.NewServer("127.0.0.1:0", coord, "node-1")
+	if err := srv.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer srv.Close()
+
+	client := api.NewClient("http://" + srv.Addr())
+	ctx := context.Background()
+
+	def := flow.WorkflowDefinition{
+		Name: "payment-pipeline",
+		Steps: []flow.StepDefinition{
+			{Name: "validate", Activity: "validate-payload"},
+			{Name: "pay", Activity: "process-payment", DependsOn: []string{"validate"}},
+		},
+	}
+
+	// Start workflow with an invalid card -> step "pay" fails with CARD_DECLINED
+	_, err = client.StartWorkflow(ctx, flowstore.StartWorkflowRequest{
+		WorkflowID: "wf-replay-1",
+		Definition: def,
+		Input:      json.RawMessage(`{"card_valid":false,"customer":"alice"}`),
+		Metadata:   map[string]string{"env": "prod", "region": "eu"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	waitStatus(t, coord, "wf-replay-1", flow.StatusFailed)
+
+	// Search workflows via Zero-CDC Search API using metadata, error_code, and full-text query
+	searchRes, err := client.SearchWorkflows(ctx, flowstore.SearchQuery{
+		Query:     "alice region:eu",
+		ErrorCode: "CARD_DECLINED",
+		Statuses:  []flow.Status{flow.StatusFailed},
+	})
+	if err != nil {
+		t.Fatalf("SearchWorkflows failed: %v", err)
+	}
+	if searchRes.Total != 1 || searchRes.Hits[0].WorkflowID != "wf-replay-1" {
+		t.Fatalf("expected SearchWorkflows to find wf-replay-1, got %+v", searchRes)
+	}
+	if len(searchRes.Facets["error_code"]) != 1 || searchRes.Facets["error_code"][0].Value != "CARD_DECLINED" {
+		t.Fatalf("expected error_code facet CARD_DECLINED, got %+v", searchRes.Facets)
+	}
+
+	// Now Time-Travel Replay from step "pay" with patched JSON input `{"card_valid":true}`!
+	// Step "validate" stays COMPLETED (not re-executed), while "pay" re-runs with the fixed payload and completes the workflow.
+	_, err = client.ReplayStep(ctx, "wf-replay-1", "pay", json.RawMessage(`{"card_valid":true,"customer":"alice"}`))
+	if err != nil {
+		t.Fatalf("ReplayStep failed: %v", err)
+	}
+
+	replayed := waitStatus(t, coord, "wf-replay-1", flow.StatusCompleted)
+	if replayed.Steps["pay"].Status != flow.StepStatusCompleted {
+		t.Fatalf("expected replayed step 'pay' to complete, got %s", replayed.Steps["pay"].Status)
+	}
+}
+

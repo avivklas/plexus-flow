@@ -87,12 +87,15 @@ func (e *Executor) ExecuteActivity(task ActivityTask) {
 		reportCtx, reportCancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer reportCancel()
 
+		now := time.Now().UTC()
 		if lastErr == nil {
 			_, err := applier.Apply(reportCtx, flowstore.CmdCompleteStep, flowstore.CompleteStepRequest{
 				WorkflowID: task.WorkflowID,
 				RunID:      task.RunID,
 				StepName:   task.StepName,
+				Attempt:    task.Attempt + 1,
 				Output:     output,
+				At:         now,
 			})
 			if err != nil {
 				log.Printf("[Executor] Error reporting step completion for %s: %v", task.StepName, err)
@@ -102,9 +105,11 @@ func (e *Executor) ExecuteActivity(task ActivityTask) {
 				WorkflowID: task.WorkflowID,
 				RunID:      task.RunID,
 				StepName:   task.StepName,
+				Attempt:    task.Attempt + 1,
 				Error:      lastErr.Error(),
 				Code:       CodeOf(lastErr),
 				Retryable:  false,
+				At:         now,
 			})
 			if err != nil {
 				log.Printf("[Executor] Error reporting step failure for %s: %v", task.StepName, err)
@@ -141,12 +146,15 @@ func (e *Executor) ExecuteCompensation(task CompensationTask) {
 		reportCtx, reportCancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer reportCancel()
 
+		now := time.Now().UTC()
 		if lastErr == nil {
 			_, err := applier.Apply(reportCtx, flowstore.CmdCompleteCompensationStep, flowstore.CompleteCompensationStepRequest{
 				WorkflowID: task.WorkflowID,
 				RunID:      task.RunID,
 				StepName:   task.StepName,
+				Attempt:    task.Attempt + 1,
 				Output:     output,
+				At:         now,
 			})
 			if err != nil {
 				log.Printf("[Executor] Error reporting compensation completion for %s: %v", task.StepName, err)
@@ -156,8 +164,10 @@ func (e *Executor) ExecuteCompensation(task CompensationTask) {
 				WorkflowID: task.WorkflowID,
 				RunID:      task.RunID,
 				StepName:   task.StepName,
+				Attempt:    task.Attempt + 1,
 				Error:      lastErr.Error(),
 				Code:       CodeOf(lastErr),
+				At:         now,
 			})
 			if err != nil {
 				log.Printf("[Executor] Error reporting compensation failure for %s: %v", task.StepName, err)

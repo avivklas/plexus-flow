@@ -91,6 +91,13 @@ func (d *WorkflowDefinition) Validate() error {
 		}
 	}
 
+	norm := d.Normalized()
+	for _, s := range norm.Steps {
+		if err := s.When.Validate(s.Name, s.DependsOn); err != nil {
+			return err
+		}
+	}
+
 	return nil
 }
 

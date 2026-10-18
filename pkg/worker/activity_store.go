@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"sync"
 
+	"github.com/avivklas/plexus/pkg/dedup"
 	"github.com/avivklas/plexus/pkg/store"
 )
 
@@ -18,6 +19,7 @@ type ActivityStore struct {
 	mu            sync.RWMutex
 	tasks         map[string]ActivityTask
 	compensations map[string]CompensationTask
+	dedupStore    dedup.Store
 	onDispatch    func(task ActivityTask)
 	onCompensate  func(task CompensationTask)
 }
@@ -36,6 +38,13 @@ func NewActivityStore() *ActivityStore {
 // ID implements store.Store.
 func (s *ActivityStore) ID() store.StoreID {
 	return "activitystore"
+}
+
+// SetDedupStore binds the downstream deduplication store so its state is included in Raft snapshots and restores.
+func (s *ActivityStore) SetDedupStore(d dedup.Store) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.dedupStore = d
 }
 
 // SetListeners registers callback hooks when activities or compensations are committed to this store.
@@ -121,23 +130,29 @@ func (s *ActivityStore) registerHandlers() {
 	})
 }
 
-// Snapshot serializes ActivityStore state.
+// Snapshot serializes ActivityStore state and any bound DedupStore state.
 func (s *ActivityStore) Snapshot() ([]byte, error) {
 	s.mu.RLock()
-	defer s.mu.RUnlock()
-
+	ds := s.dedupStore
 	data := struct {
 		Tasks         map[string]ActivityTask     `json:"tasks"`
 		Compensations map[string]CompensationTask `json:"compensations"`
+		Dedup         json.RawMessage             `json:"dedup,omitempty"`
 	}{
 		Tasks:         s.tasks,
 		Compensations: s.compensations,
 	}
-
-	return json.Marshal(data)
+	if ds != nil {
+		if b, err := ds.Snapshot(); err == nil {
+			data.Dedup = b
+		}
+	}
+	b, err := json.Marshal(data)
+	s.mu.RUnlock()
+	return b, err
 }
 
-// Restore resets state from snapshot.
+// Restore resets state from snapshot (including any bound DedupStore).
 func (s *ActivityStore) Restore(data []byte) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -145,6 +160,7 @@ func (s *ActivityStore) Restore(data []byte) error {
 	var state struct {
 		Tasks         map[string]ActivityTask     `json:"tasks"`
 		Compensations map[string]CompensationTask `json:"compensations"`
+		Dedup         json.RawMessage             `json:"dedup,omitempty"`
 	}
 
 	if err := json.Unmarshal(data, &state); err != nil {
@@ -158,6 +174,11 @@ func (s *ActivityStore) Restore(data []byte) error {
 	s.compensations = state.Compensations
 	if s.compensations == nil {
 		s.compensations = make(map[string]CompensationTask)
+	}
+	if s.dedupStore != nil && len(state.Dedup) > 0 {
+		if err := s.dedupStore.Restore(state.Dedup); err != nil {
+			return fmt.Errorf("restore dedup store: %w", err)
+		}
 	}
 
 	return nil

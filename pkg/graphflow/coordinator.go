@@ -89,6 +89,7 @@ func NewCoordinator(cfg Config) (*Coordinator, error) {
 	g := graph.New(cfg.GraphName)
 
 	// Attach deduplication store to downstream machine & activity store
+	cfg.ActivityStore.SetDedupStore(cfg.DedupStore)
 	g.AddMachine(cfg.Upstream, nil)
 	g.AddMachine(cfg.Downstream, cfg.DedupStore)
 	g.EnableDedupOnStore(cfg.Downstream, cfg.ActivityStore)
@@ -129,6 +130,7 @@ func NewCoordinator(cfg Config) (*Coordinator, error) {
 		flowstore.CmdFireTimer,
 		flowstore.CmdFireTimers,
 		flowstore.CmdTriggerSchedule,
+		flowstore.CmdReplayStep,
 	)
 	c.edge = edge
 
@@ -403,6 +405,12 @@ func (c *Coordinator) Flow(name string) (flow.WorkflowDefinition, bool) {
 // StartWorkflow initiates a workflow via upstream Raft machine consensus.
 func (c *Coordinator) StartWorkflow(ctx context.Context, req flowstore.StartWorkflowRequest) (*flow.WorkflowInstance, error) {
 	_ = c.RegisterFlow(req.Definition) // invalid definitions are rejected by the store below
+	if req.At.IsZero() {
+		req.At = time.Now().UTC()
+	}
+	if req.RunID == "" {
+		req.RunID = fmt.Sprintf("run-%d", req.At.UnixNano())
+	}
 	res, err := c.cfg.Upstream.Apply(ctx, flowstore.CmdStartWorkflow, req)
 	if err != nil {
 		return nil, err
@@ -415,6 +423,30 @@ func (c *Coordinator) StartWorkflow(ctx context.Context, req flowstore.StartWork
 		return nil, fmt.Errorf("unexpected start workflow response type: %T", res)
 	}
 	return wf, nil
+}
+
+// ReplayStep resets a step (and its downstream dependents) to PENDING with optional patched input and resumes the workflow.
+func (c *Coordinator) ReplayStep(ctx context.Context, req flowstore.ReplayStepRequest) (*flow.WorkflowInstance, error) {
+	if req.At.IsZero() {
+		req.At = time.Now().UTC()
+	}
+	// Prune previous activity records for this workflow on downstream so replayed attempt=1 tasks are dispatched cleanly.
+	if pruneCmd, err := store.NewCommand(worker.CmdPruneWorkflowActivities, worker.PruneWorkflowActivitiesRequest{
+		WorkflowID: req.WorkflowID,
+	}); err == nil {
+		_, _ = c.cfg.Downstream.Apply(ctx, pruneCmd.Type, worker.PruneWorkflowActivitiesRequest{WorkflowID: req.WorkflowID})
+	}
+	res, err := c.cfg.Upstream.Apply(ctx, flowstore.CmdReplayStep, req)
+	if err != nil {
+		return nil, err
+	}
+	if wf, ok := res.(*flow.WorkflowInstance); ok {
+		return wf, nil
+	}
+	if localWf, exists := c.flowStore.GetWorkflow(req.WorkflowID); exists {
+		return localWf, nil
+	}
+	return nil, fmt.Errorf("unexpected replay step response: %T", res)
 }
 
 // UpsertSchedule registers or updates a recurring cron/interval workflow schedule.
@@ -476,6 +508,11 @@ func (c *Coordinator) ListWorkflows() []*flow.WorkflowInstance {
 	return c.flowStore.ListWorkflows()
 }
 
+// SearchWorkflows executes a structured, full-text, and faceted query over local workflow state with zero CDC lag.
+func (c *Coordinator) SearchWorkflows(q flowstore.SearchQuery) flowstore.SearchResult {
+	return c.flowStore.SearchWorkflows(q)
+}
+
 // Watch subscribes to changes of the workflows match accepts; see flowstore.Store.Watch.
 func (c *Coordinator) Watch(match func(*flow.WorkflowInstance) bool, buffer int) (<-chan *flow.WorkflowInstance, func()) {
 	return c.flowStore.Watch(match, buffer)
@@ -492,6 +529,7 @@ func (c *Coordinator) SignalWorkflow(ctx context.Context, workflowID, signalName
 		WorkflowID: workflowID,
 		SignalName: signalName,
 		Payload:    payload,
+		At:         time.Now().UTC(),
 	})
 	return err
 }
@@ -501,6 +539,7 @@ func (c *Coordinator) CancelWorkflow(ctx context.Context, workflowID, reason str
 	_, err := c.cfg.Upstream.Apply(ctx, flowstore.CmdCancelWorkflow, flowstore.CancelWorkflowRequest{
 		WorkflowID: workflowID,
 		Reason:     reason,
+		At:         time.Now().UTC(),
 	})
 	return err
 }

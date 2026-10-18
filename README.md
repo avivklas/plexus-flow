@@ -187,23 +187,41 @@ final = wait_for("http://127.0.0.1:8080", "order-1001")
 |---|---|
 | `POST /api/v1/workflows/start` | Start a new workflow instance (transparently forwarded to leader if sent to a follower) |
 | `GET /api/v1/workflows/{id}` | Get workflow state from hot memory or cold archive (`POST .../signal`, `POST .../cancel`) |
+| `POST /api/v1/workflows/{id}/replay` | **Time-Travel Step Replay:** Reset a step (and its downstream DAG) to `PENDING` with optional patched JSON input and re-execute |
+| `GET /api/v1/workflows/search` / `POST /api/v1/workflows/search` | **Zero-CDC Faceted Search:** Full-text, `key:value`, status, error code, metadata, and JSON payload queries with live facet counts |
 | `GET /api/v1/workflows/{id}/watch` | SSE stream of state changes until terminal status |
 | `POST /api/v1/workflows/compact` | Archive terminal workflows to cold disk storage and compact hot Raft memory |
 | `GET /api/v1/schedules` / `POST /api/v1/schedules` | List or upsert durable cron (`*/5 * * * *`) & interval (`@every 10s`) schedules |
 | `DELETE /api/v1/schedules/{id}` | Delete a durable schedule |
-| `GET /api/v1/flows` / `GET /api/v1/flows/{name}` | List known flows and inspect DAG + compensation edges |
+| `GET /api/v1/flows` / `GET /api/v1/flows/{name}` | List known flows and inspect DAG + conditional `When` guards + compensation edges |
 | `GET /api/v1/traces/{workflowID}` | Execution trace overlaid on the flow graph |
+
+---
+
+## Why Engineering Teams Switch from Temporal to Plexus-Flow
+
+1. **Zero Determinism Tax (No `NonDeterministicError`):** Temporal re-executes your workflow code from line 1 on every state transition and crashes if a deployment changes a log line, map iteration, or `time.Now()` call without `workflow.GetVersion` gates. In `plexus-flow`, the DAG state machine lives inside Raft—your activities are ordinary functions (`worker.RegisterTyped[In, Out]`) that can be deployed and updated at any time without breaking in-flight workflows.
+2. **Declarative Conditional Branching (`flow.Condition`):** Route execution dynamically (`When: &flow.Condition{Source: "input", Field: "amount", Op: flow.OpGT, Value: 1000}`) based on workflow input, metadata, or upstream step JSON outputs (`eq`, `ne`, `gt`, `gte`, `lt`, `lte`, `in`, `exists`, `not_exists`). Untaken branches are automatically marked `SKIPPED` while downstream join steps still advance cleanly.
+3. **Time-Travel Step Replay & Input Patching (`/replay`):** When a 10-step workflow fails on step 8 due to a bad payload or downstream outage, fix the bug or patch the step's JSON input and call `ReplayStep(ctx, workflowID, "step-8", patchedInput)`. Steps 1–7 stay `COMPLETED` while step 8 and its downstream dependents re-run immediately.
+4. **Zero-CDC Sub-Millisecond Search & Facets (`/workflows/search`):** Temporal requires running Elasticsearch/OpenSearch + Kafka CDC pipelines just to filter workflows by custom attributes. `plexus-flow` indexes workflow state directly in its Raft memory—query by free-text, `meta.region:eu`, `error_code:CARD_DECLINED`, or nested JSON input predicates with zero replication lag and built-in facet aggregations.
+5. **1 Binary vs. 7 Infrastructure Services:** Replace Temporal Server (Frontend, History, Matching, Worker) + Cassandra/Postgres + Elasticsearch + Kafka with a single embedded or clustered Go binary.
 
 ---
 
 ## Production Execution Primitives
 
+- **Generics-First Typed Activity SDK (`worker.RegisterTyped[In, Out]`):** Write strongly-typed Go structs (`func(ctx context.Context, in ChargeReq) (ChargeResp, error)`) with automatic JSON marshaling/unmarshaling alongside raw `json.RawMessage` handlers.
+- **Declarative Conditional Branching (`StepDefinition.When`):** Evaluate predicates against `"input"`, `"metadata"`, or `<upstream-step-name>` outputs (including `$status`) at dispatch time without replay determinism constraints.
+- **Time-Travel Step Replay (`CmdReplayStep`):** Reset any failed, compensated, or completed step (and its transitive downstream dependents) to `PENDING` with optional patched input and immediately re-dispatch through the Raft Graph.
+- **Zero-CDC Workflow Search & Facets (`Store.SearchWorkflows`):** Sub-millisecond full-text, `key:value` token, metadata, status, error code, duration, and nested JSON `InputMatch` filtering with automatic `status`, `flow`, and `error_code` facet counts.
+- **Attempt & RunID Zombie Worker Fencing:** Every step dispatch increments a monotonic `Attempt` token and binds to `RunID`. Both the upstream `FlowStore` FSM and downstream `ActivityStore` enforce `Attempt` + `RunID` fencing so delayed completions or failures from partitioned/zombie workers can never overwrite a retried or replayed step.
+- **Deterministic Raft FSM Timestamps (`At` & `DedupStore` Snapshotting):** Proposals stamp wall-clock timestamps (`req.At`) before Raft replication so every replica produces byte-identical state and history across snapshots, and `ActivityStore` snapshots/restores its `DedupStore` state atomically.
 - **Exponential Retry Policy & Error Filtering (`flow.RetryPolicy`):** Per-step `InitialInterval`, `BackoffCoefficient`, `MaxInterval`, and `NonRetryableErrorCodes` (immediately triggering failure/Saga compensation without burning retries on `4xx` or validation errors).
 - **Heartbeat Progress Checkpointing (`workerclient.ReportProgress`):** Long-running remote workers can stream arbitrary JSON progress checkpoints inside gRPC heartbeats. If a worker crashes mid-flight, the replacement worker receives `TaskInfo.LastProgress` to resume from the last checkpoint instead of restarting from zero.
 - **Durable Cron & Interval Schedules (`flow.Schedule`):** Built-in Raft-replicated cron (`0 * * * *`) and interval (`@every 5m`, `@daily`) schedules with overlap policies (`Skip`, `Allow`, `CancelPrevious`).
 - **$O(\log N)$ Min-Heap Timers & Batched Firing:** Sleep steps, wait-signal timeouts, and retry backoff timers are indexed in an $O(\log N)$ min-heap and resolved in a single batched `CmdFireTimers` Raft commit per tick.
 - **Multi-Raft Horizontal Sharding (`graphflow.ShardedCoordinator`):** Partition workflows across $N$ independent Raft Graph shards by `WorkflowID` (FNV-1a hashing) to scale consensus write throughput linearly.
-- **Tiered Cold Storage Archival (`flowstore.FileArchiver`):** Terminal workflows are automatically pruned from the downstream `ActivityStore` and can be compacted out of the hot `FlowStore` into cold disk archives, with `GetWorkflow` and `GetHistory` transparently falling back to cold storage on cache miss.
+- **Tiered Cold Storage Archival (`flowstore.FileArchiver`):** Terminal workflows are automatically pruned from the downstream `ActivityStore` and can be compacted out of the hot `FlowStore` into cold disk archives, with `GetWorkflow`, `GetHistory`, and `ReplayStep` transparently falling back to cold storage on cache miss.
 
 ---
 
