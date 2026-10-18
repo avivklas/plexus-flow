@@ -102,3 +102,59 @@ def watch_flow(
                     yield summary
         except (urllib.error.URLError, OSError, TimeoutError):
             time.sleep(0.2)
+
+
+def replay_step(
+    base_url: str,
+    workflow_id: str,
+    step_name: str,
+    *,
+    patched_input: Any | None = None,
+    timeout: float = 10.0,
+) -> dict[str, Any]:
+    """Time-travel / replay a workflow from ``step_name`` (resetting it and its downstream
+    dependents to PENDING) with optional ``patched_input``."""
+    wf_id = urllib.parse.quote(workflow_id, safe="")
+    url = f"{base_url.rstrip('/')}/api/v1/workflows/{wf_id}/replay"
+    payload: dict[str, Any] = {"step_name": step_name}
+    if patched_input is not None:
+        payload["input"] = patched_input
+    data = json.dumps(payload).encode("utf-8")
+    req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"}, method="POST")
+    with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310
+        return json.loads(resp.read().decode("utf-8"))
+
+
+def search_workflows(
+    base_url: str,
+    *,
+    query: str = "",
+    flow: str = "",
+    statuses: list[str] | None = None,
+    error_code: str = "",
+    metadata: dict[str, str] | None = None,
+    input_match: dict[str, Any] | None = None,
+    limit: int = 50,
+    offset: int = 0,
+    timeout: float = 10.0,
+) -> dict[str, Any]:
+    """Execute a zero-CDC-lag structured and full-text workflow search with facet counts."""
+    url = f"{base_url.rstrip('/')}/api/v1/workflows/search"
+    payload: dict[str, Any] = {"limit": limit, "offset": offset}
+    if query:
+        payload["query"] = query
+    if flow:
+        payload["flow"] = flow
+    if statuses:
+        payload["statuses"] = statuses
+    if error_code:
+        payload["error_code"] = error_code
+    if metadata:
+        payload["metadata"] = metadata
+    if input_match:
+        payload["input_match"] = input_match
+    data = json.dumps(payload).encode("utf-8")
+    req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"}, method="POST")
+    with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310
+        return json.loads(resp.read().decode("utf-8"))
+
