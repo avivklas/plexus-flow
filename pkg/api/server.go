@@ -46,6 +46,7 @@ func NewServer(addr string, coord *graphflow.Coordinator, nodeID string) *Server
 	s.mux = mux
 	mux.HandleFunc("/api/v1/workflows/start", s.withLeaderForward(s.handleStartWorkflow))
 	mux.HandleFunc("/api/v1/workflows/compact", s.withLeaderForward(s.handleCompactWorkflows))
+	mux.HandleFunc("/api/v1/workflows/search", s.handleSearchWorkflows)
 	mux.HandleFunc("/api/v1/workflows", s.handleWorkflows)
 	mux.HandleFunc("/api/v1/workflows/", s.handleWorkflowByID)
 	mux.HandleFunc("/api/v1/schedules", s.handleSchedules)
@@ -273,6 +274,35 @@ func (s *Server) handleScheduleByID(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func (s *Server) handleSearchWorkflows(w http.ResponseWriter, r *http.Request) {
+	var q flowstore.SearchQuery
+	switch r.Method {
+	case http.MethodGet:
+		q.Query = r.URL.Query().Get("q")
+		q.Flow = r.URL.Query().Get("flow")
+		q.ErrorCode = r.URL.Query().Get("error_code")
+		if st := r.URL.Query().Get("status"); st != "" {
+			for _, part := range strings.Split(st, ",") {
+				if p := strings.TrimSpace(part); p != "" {
+					q.Statuses = append(q.Statuses, flow.Status(strings.ToUpper(p)))
+				}
+			}
+		}
+	case http.MethodPost:
+		if r.ContentLength != 0 {
+			if err := json.NewDecoder(r.Body).Decode(&q); err != nil {
+				writeJSONError(w, http.StatusBadRequest, "invalid search query: "+err.Error())
+				return
+			}
+		}
+	default:
+		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	res := s.coord.SearchWorkflows(q)
+	writeJSON(w, http.StatusOK, res)
+}
+
 func (s *Server) handleWorkflows(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
@@ -293,7 +323,7 @@ func (s *Server) handleWorkflowByID(w http.ResponseWriter, r *http.Request) {
 
 	wfID := parts[0]
 
-	// Handle sub-resources: /signal, /cancel, /history, /watch
+	// Handle sub-resources: /signal, /cancel, /replay, /history, /watch
 	if len(parts) > 1 {
 		sub := parts[1]
 		switch sub {
@@ -334,6 +364,42 @@ func (s *Server) handleWorkflowByID(w http.ResponseWriter, r *http.Request) {
 					return
 				}
 				writeJSON(w, http.StatusOK, map[string]string{"status": "cancelling"})
+			})(w, r)
+			return
+
+		case "replay":
+			if r.Method != http.MethodPost {
+				writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
+				return
+			}
+			s.withLeaderForward(func(w http.ResponseWriter, r *http.Request) {
+				var repReq ReplayRequest
+				if err := json.NewDecoder(r.Body).Decode(&repReq); err != nil {
+					writeJSONError(w, http.StatusBadRequest, "invalid replay request: "+err.Error())
+					return
+				}
+				if strings.TrimSpace(repReq.StepName) == "" {
+					writeJSONError(w, http.StatusBadRequest, "step_name is required")
+					return
+				}
+				wf, err := s.coord.ReplayStep(r.Context(), flowstore.ReplayStepRequest{
+					WorkflowID: wfID,
+					StepName:   repReq.StepName,
+					Input:      repReq.Input,
+				})
+				if err != nil {
+					if errors.Is(err, flow.ErrWorkflowNotFound) || strings.Contains(err.Error(), flow.ErrWorkflowNotFound.Error()) {
+						writeJSONError(w, http.StatusNotFound, err.Error())
+						return
+					}
+					if errors.Is(err, flow.ErrStepNotFound) || strings.Contains(err.Error(), flow.ErrStepNotFound.Error()) {
+						writeJSONError(w, http.StatusBadRequest, err.Error())
+						return
+					}
+					writeJSONError(w, http.StatusInternalServerError, err.Error())
+					return
+				}
+				writeJSON(w, http.StatusOK, wf)
 			})(w, r)
 			return
 

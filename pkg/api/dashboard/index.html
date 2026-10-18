@@ -80,6 +80,12 @@
   .tracing .edge { opacity: .18; }
   .tracing .edge.taken { opacity: 1; stroke-width: 3; }
   .lane { font-size: 12px; fill: var(--bad); }
+    #searchbox { padding: 8px 10px; border-bottom: 1px solid var(--line); }
+    #searchbox input { width: 100%; font: inherit; font-size: 12px; padding: 6px 10px; border: 1px solid var(--line); border-radius: 7px; }
+    .replay-box { margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--line); }
+    .replay-box textarea { width: 100%; min-height: 76px; font: 12px/1.35 ui-monospace, SFMono-Regular, Menlo, monospace; padding: 8px; border: 1px solid var(--line); border-radius: 7px; margin: 4px 0 8px; }
+    .replay-btn { width: 100%; font: inherit; font-weight: 600; font-size: 12px; padding: 7px 12px; border: 0; border-radius: 7px; background: var(--run); color: #fff; cursor: pointer; }
+    .replay-btn:hover { opacity: .92; }
 </style>
 </head>
 <body>
@@ -94,6 +100,7 @@
 </header>
 <main>
   <aside id="traces">
+    <div id="searchbox"><input id="qinput" type="search" placeholder="Search ID, payload, channel:web…" aria-label="Search traces"></div>
     <div id="filters"></div>
     <div id="tracelist"></div>
   </aside>
@@ -110,9 +117,9 @@
 (() => {
   const NS = 'http://www.w3.org/2000/svg';
   const W = 168, H = 64, GX = 48, GY = 34;
-  const state = { flows: [], flow: null, graph: null, mode: 'flow', filter: '', traces: [], traceId: null, trace: null, node: null };
+  const state = { flows: [], flow: null, graph: null, mode: 'flow', filter: '', query: '', traces: [], traceId: null, trace: null, node: null };
   const $ = id => document.getElementById(id);
-  const api = p => fetch('/api/v1' + p).then(r => { if (!r.ok) throw new Error(r.status); return r.json(); });
+  const api = (p, opt) => fetch('/api/v1' + p, opt).then(r => { if (!r.ok) throw new Error(r.status); return r.json(); });
   const el = (tag, attrs = {}, parent) => { const e = document.createElementNS(NS, tag); for (const k in attrs) e.setAttribute(k, attrs[k]); if (parent) parent.appendChild(e); return e; };
   const ms = n => n >= 1000 ? (n / 1000).toFixed(1) + 's' : n + 'ms';
   const clip = (s, n) => s.length > n ? s.slice(0, n - 1) + '…' : s;
@@ -202,6 +209,7 @@
         else sub = t.status + '…';
       } else if (n.kind === 'step') {
         const bits = []; if (n.retries) bits.push('retry ×' + n.retries); if (n.timeout_ms) bits.push(ms(n.timeout_ms));
+        if (n.when) bits.push('if ' + n.when);
         if (n.activity && n.activity !== n.label) bits.unshift(n.activity);
         sub = bits.join(' · ');
       } else if (n.kind === 'compensation') sub = 'undoes ' + n.undoes;
@@ -226,11 +234,35 @@
       if (t.attempts) kv('Attempts', `${t.attempts} of ${t.max_attempts}`);
       if (t.duration_ms) kv('Duration', ms(t.duration_ms));
       pre('Input', t.input); pre('Output', t.output);
+      if (n.kind === 'step' && state.traceId) {
+        const box = document.createElement('div'); box.className = 'replay-box';
+        const lbl = document.createElement('div'); lbl.className = 'k'; lbl.textContent = 'Time-Travel / Replay Step Input (JSON)';
+        const ta = document.createElement('textarea');
+        ta.value = t.input ? JSON.stringify(t.input, null, 2) : '';
+        const btn = document.createElement('button'); btn.className = 'replay-btn'; btn.textContent = `↺ Replay from "${n.step}"`;
+        btn.onclick = async () => {
+          btn.disabled = true; btn.textContent = 'Replaying…';
+          try {
+            const payload = { step_name: n.step };
+            if (ta.value.trim()) payload.input = JSON.parse(ta.value);
+            await api('/workflows/' + encodeURIComponent(state.traceId) + '/replay', {
+              method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
+            });
+            await selectTrace(state.traceId);
+          } catch (err) {
+            alert('Replay failed: ' + err.message);
+            btn.disabled = false; btn.textContent = `↺ Replay from "${n.step}"`;
+          }
+        };
+        box.append(lbl, ta, btn);
+        d.appendChild(box);
+      }
     } else {
       if (n.kind === 'step') {
         kv('Activity', n.activity);
         kv('Retries', String(n.retries || 0));
         kv('Timeout', n.timeout_ms ? ms(n.timeout_ms) : 'none');
+        if (n.when) kv('When Condition', n.when);
         kv('Depends on', n.depends_on?.length ? n.depends_on.join(', ') : '—');
         const c = state.graph.nodes.find(x => x.id === 'comp:' + n.step);
         kv('If rolled back', c ? c.label : 'nothing to undo');
@@ -274,8 +306,15 @@
 
   async function loadTraces() {
     if (!state.flow) return;
-    const q = state.filter ? '?status=' + state.filter : '';
-    state.traces = await api('/flows/' + encodeURIComponent(state.flow) + '/traces' + q);
+    if (state.query.trim()) {
+      const params = new URLSearchParams({ flow: state.flow, q: state.query.trim() });
+      if (state.filter) params.set('status', state.filter);
+      const res = await api('/workflows/search?' + params.toString());
+      state.traces = res.hits || [];
+    } else {
+      const q = state.filter ? '?status=' + state.filter : '';
+      state.traces = await api('/flows/' + encodeURIComponent(state.flow) + '/traces' + q);
+    }
     traceList();
   }
 
@@ -320,6 +359,12 @@
   $('tab-flow').onclick = () => setMode('flow');
   $('tab-traces').onclick = () => setMode('traces');
   $('flowsel').onchange = async e => { state.flow = e.target.value; state.trace = null; state.traceId = null; state.node = null; await loadFlows(); if (state.mode === 'traces') setMode('traces'); };
+  let searchTimer = null;
+  $('qinput').oninput = e => {
+    state.query = e.target.value;
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(() => loadTraces(), 120);
+  };
 
   // Live updates: the server pushes a summary whenever a run of this flow changes.
   // The trace list is updated in place from the summary; only the open trace is re-fetched.
@@ -334,7 +379,7 @@
       const i = state.traces.findIndex(x => x.workflow_id === t.workflow_id);
       const keep = !state.filter || t.status === state.filter;
       if (i >= 0) { if (keep) state.traces[i] = t; else state.traces.splice(i, 1); }
-      else if (keep) { state.traces.unshift(t); }
+      else if (keep && !state.query) { state.traces.unshift(t); }
       if (state.mode !== 'traces') return;
       if (!listQueued) { listQueued = true; requestAnimationFrame(() => { listQueued = false; traceList(); }); }
       if (t.workflow_id === state.traceId && !traceTimer) {

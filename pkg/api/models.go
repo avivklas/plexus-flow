@@ -1,5 +1,7 @@
 package api
 
+import "encoding/json"
+
 // ClusterStatusResponse provides cluster membership and leadership diagnostics.
 type ClusterStatusResponse struct {
 	NodeID      string            `json:"node_id"`
@@ -20,6 +22,12 @@ type SignalRequest struct {
 // CancelRequest payload for cancelling a workflow.
 type CancelRequest struct {
 	Reason string `json:"reason"`
+}
+
+// ReplayRequest payload for replaying a workflow from a specific step with optional patched input.
+type ReplayRequest struct {
+	StepName string          `json:"step_name"`
+	Input    json.RawMessage `json:"input,omitempty"`
 }
 
 // ErrorResponse represents a standardized JSON error message.

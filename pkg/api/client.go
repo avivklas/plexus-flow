@@ -315,3 +315,66 @@ func (c *Client) CompactWorkflows(ctx context.Context, req flowstore.CompactWork
 	return &out, nil
 }
 
+// ReplayStep resets a step (and its downstream dependents) with optional patched input and resumes the workflow.
+func (c *Client) ReplayStep(ctx context.Context, workflowID, stepName string, input json.RawMessage) (*flow.WorkflowInstance, error) {
+	b, err := json.Marshal(ReplayRequest{
+		StepName: stepName,
+		Input:    input,
+	})
+	if err != nil {
+		return nil, err
+	}
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/api/v1/workflows/"+workflowID+"/replay", bytes.NewReader(b))
+	if err != nil {
+		return nil, err
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	resp, err := c.httpClient.Do(httpReq)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, flow.ErrWorkflowNotFound
+	}
+	if resp.StatusCode != http.StatusOK {
+		var errResp ErrorResponse
+		_ = json.NewDecoder(resp.Body).Decode(&errResp)
+		return nil, fmt.Errorf("replay step failed (status %d): %s", resp.StatusCode, errResp.Error)
+	}
+	var wf flow.WorkflowInstance
+	if err := json.NewDecoder(resp.Body).Decode(&wf); err != nil {
+		return nil, err
+	}
+	return &wf, nil
+}
+
+// SearchWorkflows executes a structured, full-text, metadata, and faceted search query.
+func (c *Client) SearchWorkflows(ctx context.Context, q flowstore.SearchQuery) (*flowstore.SearchResult, error) {
+	b, err := json.Marshal(q)
+	if err != nil {
+		return nil, err
+	}
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/api/v1/workflows/search", bytes.NewReader(b))
+	if err != nil {
+		return nil, err
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	resp, err := c.httpClient.Do(httpReq)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		var errResp ErrorResponse
+		_ = json.NewDecoder(resp.Body).Decode(&errResp)
+		return nil, fmt.Errorf("search workflows failed (status %d): %s", resp.StatusCode, errResp.Error)
+	}
+	var out flowstore.SearchResult
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+

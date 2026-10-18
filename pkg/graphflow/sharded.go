@@ -100,6 +100,11 @@ func (sc *ShardedCoordinator) CancelWorkflow(ctx context.Context, workflowID, re
 	return sc.ShardFor(workflowID).CancelWorkflow(ctx, workflowID, reason)
 }
 
+// ReplayStep routes a step replay request to the workflow's deterministic shard.
+func (sc *ShardedCoordinator) ReplayStep(ctx context.Context, req flowstore.ReplayStepRequest) (*flow.WorkflowInstance, error) {
+	return sc.ShardFor(req.WorkflowID).ReplayStep(ctx, req)
+}
+
 // ListWorkflows aggregates active/hot workflows across all shards concurrently.
 func (sc *ShardedCoordinator) ListWorkflows() []*flow.WorkflowInstance {
 	var out []*flow.WorkflowInstance
@@ -107,6 +112,46 @@ func (sc *ShardedCoordinator) ListWorkflows() []*flow.WorkflowInstance {
 		out = append(out, s.ListWorkflows()...)
 	}
 	return out
+}
+
+// SearchWorkflows executes a search query across all shards and merges hits and facet counts.
+func (sc *ShardedCoordinator) SearchWorkflows(q flowstore.SearchQuery) flowstore.SearchResult {
+	merged := flowstore.SearchResult{
+		Hits:   []flow.TraceSummary{},
+		Facets: map[string][]flowstore.SearchFacetCount{},
+	}
+	facetMaps := map[string]map[string]int{
+		"status":     {},
+		"flow":       {},
+		"error_code": {},
+	}
+	shardQuery := q
+	shardQuery.Offset = 0
+	if q.Limit > 0 {
+		shardQuery.Limit = q.Offset + q.Limit
+	}
+	for _, s := range sc.shards {
+		res := s.SearchWorkflows(shardQuery)
+		merged.Total += res.Total
+		merged.TookNS += res.TookNS
+		merged.Hits = append(merged.Hits, res.Hits...)
+		for fk, buckets := range res.Facets {
+			if facetMaps[fk] == nil {
+				facetMaps[fk] = map[string]int{}
+			}
+			for _, b := range buckets {
+				facetMaps[fk][b.Value] += b.Count
+			}
+		}
+	}
+	for fk, counts := range facetMaps {
+		var list []flowstore.SearchFacetCount
+		for val, cnt := range counts {
+			list = append(list, flowstore.SearchFacetCount{Value: val, Count: cnt})
+		}
+		merged.Facets[fk] = list
+	}
+	return merged
 }
 
 // CompactWorkflows compacts terminal workflows across all shards.

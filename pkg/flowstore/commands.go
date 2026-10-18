@@ -32,6 +32,7 @@ const (
 	CmdUpsertSchedule           store.CommandType = "flow.schedule.upsert"
 	CmdDeleteSchedule           store.CommandType = "flow.schedule.delete"
 	CmdTriggerSchedule          store.CommandType = "flow.schedule.trigger"
+	CmdReplayStep               store.CommandType = "flow.step.replay"
 )
 
 // StartWorkflowRequest initiates a new workflow execution.
@@ -41,6 +42,7 @@ type StartWorkflowRequest struct {
 	Definition flow.WorkflowDefinition `json:"definition"`
 	Input      json.RawMessage         `json:"input,omitempty"`
 	Metadata   map[string]string       `json:"metadata,omitempty"`
+	At         time.Time               `json:"at,omitempty"`
 }
 
 // DispatchStepRequest transitions a step to RUNNING state.
@@ -72,6 +74,7 @@ type UpdateStepProgressRequest struct {
 	RunID      string          `json:"run_id,omitempty"`
 	StepName   string          `json:"step_name"`
 	Progress   json.RawMessage `json:"progress"`
+	At         time.Time       `json:"at,omitempty"`
 }
 
 // CompactWorkflowsRequest evicts terminal workflows older than Before or beyond MaxRetained.
@@ -110,7 +113,9 @@ type CompleteStepRequest struct {
 	WorkflowID string          `json:"workflow_id"`
 	RunID      string          `json:"run_id"`
 	StepName   string          `json:"step_name"`
+	Attempt    int             `json:"attempt,omitempty"`
 	Output     json.RawMessage `json:"output,omitempty"`
+	At         time.Time       `json:"at,omitempty"`
 }
 
 // FailStepRequest marks a step execution as failed and triggers retry or saga compensation.
@@ -118,24 +123,28 @@ type FailStepRequest struct {
 	WorkflowID string `json:"workflow_id"`
 	RunID      string `json:"run_id"`
 	StepName   string `json:"step_name"`
+	Attempt    int    `json:"attempt,omitempty"`
 	Error      string `json:"error"`
 	// Code is a machine-readable failure code (e.g. "STUDY_NOT_FOUND"); free-form, may be empty.
-	Code      string `json:"code,omitempty"`
-	Retryable bool   `json:"retryable"`
+	Code      string    `json:"code,omitempty"`
+	Retryable bool      `json:"retryable"`
+	At        time.Time `json:"at,omitempty"`
 }
 
 // TriggerCompensationRequest manually or automatically forces workflow into COMPENSATING status.
 type TriggerCompensationRequest struct {
-	WorkflowID string `json:"workflow_id"`
-	RunID      string `json:"run_id"`
-	Reason     string `json:"reason"`
+	WorkflowID string    `json:"workflow_id"`
+	RunID      string    `json:"run_id"`
+	Reason     string    `json:"reason"`
+	At         time.Time `json:"at,omitempty"`
 }
 
 // StartCompensationStepRequest marks a compensating action as actively running.
 type StartCompensationStepRequest struct {
-	WorkflowID string `json:"workflow_id"`
-	RunID      string `json:"run_id"`
-	StepName   string `json:"step_name"`
+	WorkflowID string    `json:"workflow_id"`
+	RunID      string    `json:"run_id"`
+	StepName   string    `json:"step_name"`
+	At         time.Time `json:"at,omitempty"`
 }
 
 // CompleteCompensationStepRequest marks a compensating step as COMPENSATED.
@@ -143,17 +152,21 @@ type CompleteCompensationStepRequest struct {
 	WorkflowID string          `json:"workflow_id"`
 	RunID      string          `json:"run_id"`
 	StepName   string          `json:"step_name"`
+	Attempt    int             `json:"attempt,omitempty"`
 	Output     json.RawMessage `json:"output,omitempty"`
+	At         time.Time       `json:"at,omitempty"`
 }
 
 // FailCompensationStepRequest records that a compensation activity failed.
 type FailCompensationStepRequest struct {
-	WorkflowID string `json:"workflow_id"`
-	RunID      string `json:"run_id"`
-	StepName   string `json:"step_name"`
-	Error      string `json:"error"`
-	Code       string `json:"code,omitempty"`
-	Retryable  bool   `json:"retryable,omitempty"`
+	WorkflowID string    `json:"workflow_id"`
+	RunID      string    `json:"run_id"`
+	StepName   string    `json:"step_name"`
+	Attempt    int       `json:"attempt,omitempty"`
+	Error      string    `json:"error"`
+	Code       string    `json:"code,omitempty"`
+	Retryable  bool      `json:"retryable,omitempty"`
+	At         time.Time `json:"at,omitempty"`
 }
 
 // CompleteWorkflowRequest marks the entire workflow as COMPLETED.
@@ -161,13 +174,15 @@ type CompleteWorkflowRequest struct {
 	WorkflowID string          `json:"workflow_id"`
 	RunID      string          `json:"run_id"`
 	Output     json.RawMessage `json:"output,omitempty"`
+	At         time.Time       `json:"at,omitempty"`
 }
 
 // CancelWorkflowRequest requests cancellation of a running workflow.
 type CancelWorkflowRequest struct {
-	WorkflowID string `json:"workflow_id"`
-	RunID      string `json:"run_id"`
-	Reason     string `json:"reason"`
+	WorkflowID string    `json:"workflow_id"`
+	RunID      string    `json:"run_id"`
+	Reason     string    `json:"reason"`
+	At         time.Time `json:"at,omitempty"`
 }
 
 // SignalWorkflowRequest transmits an external signal/event to a workflow.
@@ -176,4 +191,14 @@ type SignalWorkflowRequest struct {
 	RunID      string          `json:"run_id"`
 	SignalName string          `json:"signal_name"`
 	Payload    json.RawMessage `json:"payload,omitempty"`
+	At         time.Time       `json:"at,omitempty"`
+}
+
+// ReplayStepRequest resets a step (and all of its transitive downstream steps) back to PENDING
+// with an optional patched input payload, resuming the workflow execution from that step.
+type ReplayStepRequest struct {
+	WorkflowID string          `json:"workflow_id"`
+	StepName   string          `json:"step_name"`
+	Input      json.RawMessage `json:"input,omitempty"`
+	At         time.Time       `json:"at,omitempty"`
 }

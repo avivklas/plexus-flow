@@ -122,6 +122,8 @@ type StepDefinition struct {
 	Timeout            time.Duration   `json:"timeout,omitempty"`
 	CompensatingAction string          `json:"compensating_action,omitempty"`
 	DependsOn          []string        `json:"depends_on,omitempty"`
+	// When is an optional condition evaluated when dependencies finish; if false, the step is skipped.
+	When *Condition `json:"when,omitempty"`
 }
 
 // WorkflowDefinition defines the static blueprint for a workflow DAG or sequential pipeline.
@@ -144,20 +146,21 @@ type StepExecution struct {
 	Input       json.RawMessage `json:"input,omitempty"`
 	Output      json.RawMessage `json:"output,omitempty"`
 	// Progress holds the latest heartbeat checkpoint reported by a running activity.
-	Progress           json.RawMessage `json:"progress,omitempty"`
-	Error              string          `json:"error,omitempty"`
-	ErrorCode          string          `json:"error_code,omitempty"`
-	Attempt            int             `json:"attempt"`
-	CompensationAttempt int            `json:"compensation_attempt,omitempty"`
-	MaxRetries         int             `json:"max_retries"`
-	RetryPolicy        *RetryPolicy    `json:"retry_policy,omitempty"`
-	Timeout            time.Duration   `json:"timeout,omitempty"`
-	CompensatingAction string          `json:"compensating_action,omitempty"`
-	DependsOn          []string        `json:"depends_on,omitempty"`
-	StartedAt          *time.Time      `json:"started_at,omitempty"`
-	CompletedAt        *time.Time      `json:"completed_at,omitempty"`
-	CompensatedAt      *time.Time      `json:"compensated_at,omitempty"`
-	DispatchedVersion  uint64          `json:"dispatched_version,omitempty"`
+	Progress            json.RawMessage `json:"progress,omitempty"`
+	Error               string          `json:"error,omitempty"`
+	ErrorCode           string          `json:"error_code,omitempty"`
+	Attempt             int             `json:"attempt"`
+	CompensationAttempt int             `json:"compensation_attempt,omitempty"`
+	MaxRetries          int             `json:"max_retries"`
+	RetryPolicy         *RetryPolicy    `json:"retry_policy,omitempty"`
+	Timeout             time.Duration   `json:"timeout,omitempty"`
+	CompensatingAction  string          `json:"compensating_action,omitempty"`
+	DependsOn           []string        `json:"depends_on,omitempty"`
+	When                *Condition      `json:"when,omitempty"`
+	StartedAt           *time.Time      `json:"started_at,omitempty"`
+	CompletedAt         *time.Time      `json:"completed_at,omitempty"`
+	CompensatedAt       *time.Time      `json:"compensated_at,omitempty"`
+	DispatchedVersion   uint64          `json:"dispatched_version,omitempty"`
 }
 
 // Event records a state transition or milestone in the workflow audit log.
@@ -198,12 +201,21 @@ type WorkflowInstance struct {
 
 // NewWorkflowInstance creates a new initialized workflow instance from a definition.
 func NewWorkflowInstance(workflowID, runID string, def WorkflowDefinition, input json.RawMessage, meta map[string]string) (*WorkflowInstance, error) {
+	return NewWorkflowInstanceAt(workflowID, runID, def, input, meta, time.Now().UTC())
+}
+
+// NewWorkflowInstanceAt creates a new initialized workflow instance with an explicit deterministic timestamp.
+func NewWorkflowInstanceAt(workflowID, runID string, def WorkflowDefinition, input json.RawMessage, meta map[string]string, now time.Time) (*WorkflowInstance, error) {
 	if err := def.Validate(); err != nil {
 		return nil, fmt.Errorf("invalid workflow definition: %w", err)
 	}
 
 	normDef := def.Normalized()
-	now := time.Now().UTC()
+	if now.IsZero() {
+		now = time.Now().UTC()
+	} else {
+		now = now.UTC()
+	}
 
 	steps := make(map[string]*StepExecution, len(normDef.Steps))
 	stepOrder := make([]string, 0, len(normDef.Steps))
@@ -224,6 +236,15 @@ func NewWorkflowInstance(workflowID, runID string, def WorkflowDefinition, input
 			rp = &cp
 		}
 
+		var cond *Condition
+		if s.When != nil {
+			cp := *s.When
+			if len(s.When.Value) > 0 {
+				cp.Value = append(json.RawMessage(nil), s.When.Value...)
+			}
+			cond = &cp
+		}
+
 		steps[s.Name] = &StepExecution{
 			Name:               s.Name,
 			Kind:               s.Kind,
@@ -237,6 +258,7 @@ func NewWorkflowInstance(workflowID, runID string, def WorkflowDefinition, input
 			Timeout:            s.Timeout,
 			CompensatingAction: s.CompensatingAction,
 			DependsOn:          append([]string(nil), s.DependsOn...),
+			When:               cond,
 		}
 	}
 
@@ -259,35 +281,55 @@ func NewWorkflowInstance(workflowID, runID string, def WorkflowDefinition, input
 		Metadata:       meta,
 	}
 
-	inst.RecordEvent("WORKFLOW_STARTED", "", "Workflow started", input)
+	inst.RecordEventAt("WORKFLOW_STARTED", "", "Workflow started", input, now)
 	return inst, nil
 }
 
-// RecordEvent appends an audit event to the instance history.
+// RecordEvent appends an audit event to the instance history using the workflow's UpdatedAt (or current UTC time).
 func (w *WorkflowInstance) RecordEvent(eventType, stepName, message string, payload any) {
+	ts := w.UpdatedAt
+	if ts.IsZero() {
+		ts = time.Now().UTC()
+	}
+	w.RecordEventAt(eventType, stepName, message, payload, ts)
+}
+
+// RecordEventAt appends an audit event with an explicit deterministic timestamp.
+func (w *WorkflowInstance) RecordEventAt(eventType, stepName, message string, payload any, at time.Time) {
+	if at.IsZero() {
+		at = w.UpdatedAt
+		if at.IsZero() {
+			at = time.Now().UTC()
+		}
+	} else {
+		at = at.UTC()
+	}
 	var rawPayload json.RawMessage
 	if payload != nil {
 		if b, ok := payload.([]byte); ok {
 			rawPayload = b
+		} else if rm, ok := payload.(json.RawMessage); ok {
+			rawPayload = rm
 		} else if b, err := json.Marshal(payload); err == nil {
 			rawPayload = b
 		}
 	}
 
-	eventID := fmt.Sprintf("evt-%d-%d", time.Now().UTC().UnixNano(), len(w.History)+1)
+	seq := len(w.History) + 1
+	eventID := fmt.Sprintf("evt-%d-%d", at.UnixNano(), seq)
 	w.History = append(w.History, Event{
 		ID:        eventID,
 		Type:      eventType,
-		Timestamp: time.Now().UTC(),
+		Timestamp: at,
 		StepName:  stepName,
 		Message:   message,
 		Payload:   rawPayload,
 	})
-	w.UpdatedAt = time.Now().UTC()
+	w.UpdatedAt = at
 }
 
 // NextReadySteps returns all steps that are currently pending (and not parked on retry backoff)
-// and have all their dependencies satisfied.
+// and have all their dependencies resolved (COMPLETED or SKIPPED).
 func (w *WorkflowInstance) NextReadySteps() []*StepExecution {
 	if w.Status != StatusRunning {
 		return nil
@@ -300,11 +342,11 @@ func (w *WorkflowInstance) NextReadySteps() []*StepExecution {
 			continue
 		}
 
-		// Check if all dependencies are completed
+		// Check if all dependencies are resolved (COMPLETED or SKIPPED)
 		depsSatisfied := true
 		for _, dep := range step.DependsOn {
 			depStep, exists := w.Steps[dep]
-			if !exists || depStep.Status != StepStatusCompleted {
+			if !exists || (depStep.Status != StepStatusCompleted && depStep.Status != StepStatusSkipped) {
 				depsSatisfied = false
 				break
 			}
@@ -315,6 +357,31 @@ func (w *WorkflowInstance) NextReadySteps() []*StepExecution {
 		}
 	}
 	return ready
+}
+
+// ShouldSkipStep reports whether a ready pending step should be skipped because:
+// 1. It has a When condition that evaluates to false, OR
+// 2. It has dependencies, ALL of its dependencies were SKIPPED, and it has no explicit When condition overriding that.
+func (w *WorkflowInstance) ShouldSkipStep(step *StepExecution) (bool, string) {
+	if step.When != nil {
+		if !step.When.Evaluate(w) {
+			return true, fmt.Sprintf("Step %s skipped (when condition on %q evaluated to false)", step.Name, step.When.Field)
+		}
+		return false, ""
+	}
+	if len(step.DependsOn) > 0 {
+		allDepsSkipped := true
+		for _, dep := range step.DependsOn {
+			if ds := w.Steps[dep]; ds == nil || ds.Status != StepStatusSkipped {
+				allDepsSkipped = false
+				break
+			}
+		}
+		if allDepsSkipped {
+			return true, fmt.Sprintf("Step %s skipped (all upstream dependencies skipped)", step.Name)
+		}
+	}
+	return false, ""
 }
 
 // NextCompensatingStep returns the next completed step that requires compensation (in reverse order of completion).
@@ -376,17 +443,49 @@ func (w *WorkflowInstance) IsTerminal() bool {
 		w.Status == StatusCompensationFailed
 }
 
-// AllStepsCompleted returns true if every step in the workflow has status COMPLETED.
+// AllStepsCompleted returns true if every step in the workflow has resolved (COMPLETED or SKIPPED via When condition).
 func (w *WorkflowInstance) AllStepsCompleted() bool {
 	if len(w.Steps) == 0 {
 		return false
 	}
 	for _, step := range w.Steps {
-		if step.Status != StepStatusCompleted {
+		if step.Status != StepStatusCompleted && step.Status != StepStatusSkipped {
 			return false
 		}
 	}
 	return true
+}
+
+// DescendantsOf returns the names of all steps that transitively depend on rootStep (in topological order).
+func (w *WorkflowInstance) DescendantsOf(rootStep string) []string {
+	desc := make(map[string]bool)
+	changed := true
+	for changed {
+		changed = false
+		for _, name := range w.StepOrder {
+			if desc[name] {
+				continue
+			}
+			st := w.Steps[name]
+			if st == nil {
+				continue
+			}
+			for _, dep := range st.DependsOn {
+				if dep == rootStep || desc[dep] {
+					desc[name] = true
+					changed = true
+					break
+				}
+			}
+		}
+	}
+	var out []string
+	for _, name := range w.StepOrder {
+		if desc[name] {
+			out = append(out, name)
+		}
+	}
+	return out
 }
 
 // AllCompensationsCompleted returns true if every step that required compensation has completed compensation.

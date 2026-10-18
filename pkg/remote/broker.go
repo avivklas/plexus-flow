@@ -463,13 +463,14 @@ func (b *Broker) failReport(d *delivery, code, msg string, retryable bool) func(
 	return func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
+		now := time.Now().UTC()
 		var err error
 		if d.kind == workerpb.TaskKind_TASK_KIND_COMPENSATION {
 			_, err = b.opt.Applier.Apply(ctx, flowstore.CmdFailCompensationStep, flowstore.FailCompensationStepRequest{
-				WorkflowID: d.workflowID, RunID: d.runID, StepName: d.step, Error: msg, Code: code})
+				WorkflowID: d.workflowID, RunID: d.runID, StepName: d.step, Attempt: d.attempt, Error: msg, Code: code, At: now})
 		} else {
 			_, err = b.opt.Applier.Apply(ctx, flowstore.CmdFailStep, flowstore.FailStepRequest{
-				WorkflowID: d.workflowID, RunID: d.runID, StepName: d.step, Error: msg, Code: code, Retryable: retryable})
+				WorkflowID: d.workflowID, RunID: d.runID, StepName: d.step, Attempt: d.attempt, Error: msg, Code: code, Retryable: retryable, At: now})
 		}
 		if err != nil {
 			log.Printf("[Broker] reporting failure of %s/%s: %v", d.workflowID, d.step, err)
@@ -481,13 +482,14 @@ func (b *Broker) successReport(d *delivery, out []byte) func() {
 	return func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
+		now := time.Now().UTC()
 		var err error
 		if d.kind == workerpb.TaskKind_TASK_KIND_COMPENSATION {
 			_, err = b.opt.Applier.Apply(ctx, flowstore.CmdCompleteCompensationStep, flowstore.CompleteCompensationStepRequest{
-				WorkflowID: d.workflowID, RunID: d.runID, StepName: d.step, Output: out})
+				WorkflowID: d.workflowID, RunID: d.runID, StepName: d.step, Attempt: d.attempt, Output: out, At: now})
 		} else {
 			_, err = b.opt.Applier.Apply(ctx, flowstore.CmdCompleteStep, flowstore.CompleteStepRequest{
-				WorkflowID: d.workflowID, RunID: d.runID, StepName: d.step, Output: out})
+				WorkflowID: d.workflowID, RunID: d.runID, StepName: d.step, Attempt: d.attempt, Output: out, At: now})
 		}
 		if err != nil {
 			log.Printf("[Broker] reporting result of %s/%s: %v", d.workflowID, d.step, err)

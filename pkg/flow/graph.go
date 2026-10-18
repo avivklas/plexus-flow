@@ -50,6 +50,7 @@ type GraphNode struct {
 	Retries   int      `json:"retries,omitempty"`
 	TimeoutMS int64    `json:"timeout_ms,omitempty"`
 	DependsOn []string `json:"depends_on,omitempty"`
+	When      string   `json:"when,omitempty"`
 	// Undoes is the step a compensation node reverts.
 	Undoes string `json:"undoes,omitempty"`
 }
@@ -134,10 +135,25 @@ func BuildGraph(def WorkflowDefinition) FlowGraph {
 	}
 
 	for _, s := range def.Steps {
+		whenDesc := ""
+		if s.When != nil {
+			src := s.When.Source
+			if src == "" {
+				src = "input"
+			}
+			op := s.When.Op
+			if op == "" {
+				op = "=="
+			}
+			whenDesc = src + "." + s.When.Field + " " + op
+			if len(s.When.Value) > 0 {
+				whenDesc += " " + string(s.When.Value)
+			}
+		}
 		g.Nodes = append(g.Nodes, GraphNode{
 			ID: StepNodeID(s.Name), Kind: NodeStep, Label: s.Name, Step: s.Name,
 			Activity: s.label(), Retries: s.Retries, TimeoutMS: s.Timeout.Milliseconds(),
-			DependsOn: append([]string(nil), s.DependsOn...),
+			DependsOn: append([]string(nil), s.DependsOn...), When: whenDesc,
 		})
 	}
 	for _, s := range def.Steps {
