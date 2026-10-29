@@ -493,26 +493,42 @@ go run ./examples/mlrelease</code></pre>
 }</code></pre>
         </div>
 
-        <h3 id="fork-join">Fork-Join DAGs (<code>depends_on</code>)</h3>
+        <h3 id="fork-join">Fork-Join DAGs &amp; the Claim-Check Pattern (<code>depends_on</code>)</h3>
         <p>
           Steps with no <code>depends_on</code> entries start as soon as the workflow starts. Multiple steps depending on the same parent run in parallel (fan-out), and a step listing multiple dependencies waits until all listed dependencies reach <code>COMPLETED</code> or <code>SKIPPED</code> (fan-in).
-          Every downstream step receives the parsed JSON outputs of its dependencies keyed by step name in <code>ctx.dependency_outputs</code> (Python) or <code>info.DependencyOutputs</code> (Go).
         </p>
+        <div class="note">
+          <strong>Control Plane vs. Data Plane:</strong> Keep payloads stored in the Raft state machine small (S3 object keys, database row IDs, row counts, and checkpoint cursors). Activities use those keys from <code>ctx.dependency_outputs</code> (Python) or <code>info.DependencyOutputs</code> (Go) to read and write large files or database tables directly.
+        </div>
 
         <div class="code-block">
-          <div class="code-header"><span>python — Fan-Out &amp; Fan-In Data Passing</span><button class="copy-code-btn" onclick="copyPre(this)">Copy</button></div>
-          <pre><code class="language-python"># Fan-out step (depends_on: ["extract-parquet"]): reads parent step output
+          <div class="code-header"><span>python — S3 &amp; Postgres I/O Across Fan-Out and Fan-In Steps</span><button class="copy-code-btn" onclick="copyPre(this)">Copy</button></div>
+          <pre><code class="language-python"># Fan-out step (depends_on: ["extract-parquet"]): fetches S3 file by key from Step 1, writes cleaned Parquet to S3
 @worker.activity("spark.cleanse")
 async def cleanse_records(ctx: TaskContext, payload: dict) -> dict:
     extracted = ctx.dependency_outputs["extract-parquet"]
-    return {"clean_uri": extracted["staging_uri"], "rows": extracted["rows"]}
+    obj = s3.get_object(Bucket=extracted["bucket"], Key=extracted["raw_key"])
+    table = pq.read_table(io.BytesIO(obj["Body"].read())).drop_null()
 
-# Fan-in join step (depends_on: ["cleanse-records", "embed-vectors"]): reads all branch outputs
+    clean_key = f"curated/{ctx.workflow_id}.parquet"
+    buf = io.BytesIO()
+    pq.write_table(table, buf)
+    s3.put_object(Bucket=extracted["bucket"], Key=clean_key, Body=buf.getvalue())
+    return {"bucket": extracted["bucket"], "clean_key": clean_key, "rows": table.num_rows}
+
+# Fan-in join step (depends_on: ["cleanse-records", "embed-vectors"]): registers outputs of both branches in Postgres
 @worker.activity("iceberg.commit_snapshot")
 async def commit_snapshot(ctx: TaskContext, payload: dict) -> dict:
     cleansed = ctx.dependency_outputs["cleanse-records"]
     embedded = ctx.dependency_outputs.get("embed-vectors")  # None if skipped by a "when" condition
-    return {"table_rows": cleansed["rows"], "has_embeddings": embedded is not None}</code></pre>
+    vector_count = embedded["indexed_vectors"] if embedded else 0
+
+    db.execute(
+        "INSERT INTO catalog_snapshots (workflow_id, s3_key, rows, vectors) VALUES (%s, %s, %s, %s)",
+        (ctx.workflow_id, cleansed["clean_key"], cleansed["rows"], vector_count),
+    )
+    db.commit()
+    return {"published_key": cleansed["clean_key"], "rows": cleansed["rows"], "vectors": vector_count}</code></pre>
         </div>
 
         <h3 id="conditions">Conditional Branching (<code>when</code>)</h3>

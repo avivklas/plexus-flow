@@ -734,7 +734,7 @@
       <div class="section-head">
         <h2>Interactive Pipeline Walkthrough</h2>
         <p>
-          Inspect how <code>plexus-flow</code> executes parallel data pipelines, handles step failures with targeted replay or LIFO Saga compensation, and recovers in-flight progress when a Raft leader fails.
+          In <code>plexus-flow</code>, the Raft state machine carries lightweight pointers (S3 keys, database IDs, checkpoint cursors) while workers perform the actual I/O—reading files from object storage, transforming tables, indexing vectors, or calling external APIs.
         </p>
       </div>
 
@@ -1036,114 +1036,220 @@ for batch in read_batches(start=state["offset"]):
     const SCENARIOS = {
       etl: {
         nodes: [
-          [{ id: "ingest", title: "1. ingest-parquet", meta: "root • checkpoints progress", progress: 100, status: "COMPLETED" }],
+          [{ id: "ingest", title: "1. ingest-parquet", meta: "DB -> S3 staging • checkpoints", progress: 100, status: "COMPLETED" }],
           [
-            { id: "validate", title: "2a. validate-schema", meta: "fan-out: depends_on [1]", progress: 100, status: "COMPLETED" },
-            { id: "pii", title: "2b. redact-pii", meta: "fan-out: depends_on [1]", progress: 100, status: "COMPLETED" },
-            { id: "embed", title: "2c. build-vector-index", meta: "fan-out: depends_on [1]", progress: 100, status: "COMPLETED" }
+            { id: "validate", title: "2a. validate-schema", meta: "S3 read -> PyArrow check", progress: 100, status: "COMPLETED" },
+            { id: "pii", title: "2b. redact-pii", meta: "S3 read -> mask -> S3 write", progress: 100, status: "COMPLETED" },
+            { id: "embed", title: "2c. build-vector-index", meta: "S3 read -> pgvector upsert", progress: 100, status: "COMPLETED" }
           ],
-          [{ id: "commit", title: "3. commit-snapshot", meta: "fan-in join: [2a, 2b, 2c]", progress: 100, status: "COMPLETED" }]
+          [{ id: "commit", title: "3. commit-snapshot", meta: "fan-in -> Postgres catalog", progress: 100, status: "COMPLETED" }]
         ],
-        python: `import asyncio
+        python: `import asyncio, hashlib, io, boto3, psycopg, pyarrow.parquet as pq, pyarrow.compute as pc
 from plexus_flow import Worker, TaskContext
 
+s3 = boto3.client("s3")
+db = psycopg.connect("postgresql://postgres@localhost:5432/warehouse")
 worker = Worker("localhost:9090", worker_id="etl-worker-1", max_concurrency=8)
 
-# Step 1 (Root): Ingests raw shards and streams checkpoints via Heartbeat frames
+# Step 1 (Root): Exports rows from Postgres into S3 Parquet shards, checkpointing cursor_id
 @worker.activity("ingest-parquet")
 async def ingest_parquet(ctx: TaskContext, payload: dict) -> dict:
-    resume = ctx.last_progress or {"shard": 0, "rows": 0}
-    rows = resume["rows"]
-    for shard in range(resume["shard"], payload["total_shards"]):
-        rows += process_shard(payload["uri"], shard)
-        await ctx.report_progress({"shard": shard + 1, "rows": rows})
-    return {"staged_uri": "s3://lake/staging/run-1.parquet", "rows": rows}
+    state = ctx.last_progress or {"cursor_id": 0, "rows": 0}
+    cursor_id, rows = state["cursor_id"], state["rows"]
+    raw_key = f"staging/{ctx.workflow_id}.parquet"
 
-# Step 2a (Fan-Out Branch 1): Reads Step 1 output from ctx.dependency_outputs
+    while True:
+        batch = db.execute(
+            "SELECT id, email, body FROM events WHERE id > %s ORDER BY id LIMIT 50000", (cursor_id,)
+        ).fetchall()
+        if not batch:
+            break
+        append_parquet_to_s3(s3, payload["bucket"], raw_key, batch)
+        cursor_id, rows = batch[-1][0], rows + len(batch)
+        await ctx.report_progress({"cursor_id": cursor_id, "rows": rows})
+
+    return {"bucket": payload["bucket"], "raw_key": raw_key, "rows": rows}
+
+# Step 2a (Fan-Out Branch 1): Downloads S3 Parquet file by key and validates schema & null rates
 @worker.activity("validate-schema")
 async def validate_schema(ctx: TaskContext, payload: dict) -> dict:
     ingested = ctx.dependency_outputs["ingest-parquet"]
-    return {"valid": ingested["rows"] > 0, "checked_rows": ingested["rows"]}
+    obj = s3.get_object(Bucket=ingested["bucket"], Key=ingested["raw_key"])
+    table = pq.read_table(io.BytesIO(obj["Body"].read()))
+    null_count = table.column("body").null_count
+    return {"valid": null_count == 0 and table.num_rows > 0, "checked_rows": table.num_rows}
 
-# Step 2b (Fan-Out Branch 2): Runs concurrently with 2a and 2c
+# Step 2b (Fan-Out Branch 2): Reads S3 Parquet file, hashes PII column, writes curated file to S3
 @worker.activity("redact-pii")
 async def redact_pii(ctx: TaskContext, payload: dict) -> dict:
     ingested = ctx.dependency_outputs["ingest-parquet"]
-    return {"clean_uri": ingested["staged_uri"].replace("staging", "clean")}
+    obj = s3.get_object(Bucket=ingested["bucket"], Key=ingested["raw_key"])
+    table = pq.read_table(io.BytesIO(obj["Body"].read()))
 
-# Step 2c (Fan-Out Branch 3): Runs concurrently with 2a and 2b
+    hashed_emails = [hashlib.sha256(v.as_py().encode()).hexdigest() for v in table["email"]]
+    clean_table = table.set_column(table.schema.get_field_index("email"), "email", [hashed_emails])
+
+    clean_key = f"curated/{ctx.workflow_id}.parquet"
+    buf = io.BytesIO()
+    pq.write_table(clean_table, buf)
+    s3.put_object(Bucket=ingested["bucket"], Key=clean_key, Body=buf.getvalue())
+    return {"clean_key": clean_key}
+
+# Step 2c (Fan-Out Branch 3): Reads S3 Parquet file, embeds text, and upserts into pgvector
 @worker.activity("build-vector-index")
 async def build_index(ctx: TaskContext, payload: dict) -> dict:
     ingested = ctx.dependency_outputs["ingest-parquet"]
-    return {"index_uri": "s3://lake/index/run-1.faiss", "vectors": ingested["rows"]}
+    obj = s3.get_object(Bucket=ingested["bucket"], Key=ingested["raw_key"])
+    table = pq.read_table(io.BytesIO(obj["Body"].read()), columns=["id", "body"])
 
-# Step 3 (Fan-In Join): Runs after 2a, 2b, and 2c all complete; merges their outputs
+    vectors = embed_model.encode(table["body"].to_pylist())
+    with db.cursor() as cur:
+        cur.executemany(
+            "INSERT INTO doc_embeddings (id, embedding) VALUES (%s, %s) ON CONFLICT (id) DO UPDATE SET embedding = EXCLUDED.embedding",
+            zip(table["id"].to_pylist(), vectors),
+        )
+    db.commit()
+    return {"indexed_vectors": len(vectors)}
+
+# Step 3 (Fan-In Join): Registers the curated S3 key & vector count in the Postgres catalog table
 @worker.activity("commit-snapshot")
 async def commit_snapshot(ctx: TaskContext, payload: dict) -> dict:
     schema = ctx.dependency_outputs["validate-schema"]
     clean  = ctx.dependency_outputs["redact-pii"]
     index  = ctx.dependency_outputs["build-vector-index"]
-    return {
-        "table_uri": clean["clean_uri"],
-        "index_uri": index["index_uri"],
-        "rows": schema["checked_rows"],
-    }
+
+    db.execute(
+        "INSERT INTO catalog_snapshots (workflow_id, s3_key, row_count, vector_count) VALUES (%s, %s, %s, %s)",
+        (ctx.workflow_id, clean["clean_key"], schema["checked_rows"], index["indexed_vectors"]),
+    )
+    db.commit()
+    return {"published_key": clean["clean_key"], "rows": schema["checked_rows"]}
 
 asyncio.run(worker.run())`,
         go: `package main
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
+	"database/sql"
+	"encoding/hex"
 	"encoding/json"
+	"fmt"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/avivklas/plexus-flow/pkg/worker"
 	"github.com/avivklas/plexus-flow/pkg/workerclient"
 )
 
-func main() {
-	reg := worker.NewRegistry()
-
-	// Step 1 (Root): Ingests shards and reports progress checkpoints
+func registerETLActivities(reg *worker.Registry, s3c *s3.Client, db *sql.DB) {
+	// Step 1 (Root): Streams rows from Postgres to S3 and checkpoints the last seen ID
 	reg.Register("ingest-parquet", func(ctx context.Context, in json.RawMessage) (json.RawMessage, error) {
 		info, _ := workerclient.TaskFromContext(ctx)
-		_ = info.LastProgress // Resume from checkpoint if non-nil
-		_ = workerclient.ReportProgress(ctx, json.RawMessage(\`{"shard":4,"rows":400000}\`))
-		return json.RawMessage(\`{"staged_uri":"s3://lake/staging/run-1.parquet","rows":1000000}\`), nil
+		var state struct {
+			CursorID int64 \`json:"cursor_id"\`
+			Rows     int   \`json:"rows"\`
+		}
+		_ = json.Unmarshal(info.LastProgress, &state)
+
+		rawKey := fmt.Sprintf("staging/%s.parquet", info.WorkflowID)
+		rows, lastID, err := streamPostgresToS3Parquet(ctx, db, s3c, "lake", rawKey, state.CursorID)
+		if err != nil {
+			return nil, err
+		}
+		prog, _ := json.Marshal(map[string]any{"cursor_id": lastID, "rows": state.Rows + rows})
+		_ = workerclient.ReportProgress(ctx, prog)
+
+		return json.Marshal(map[string]any{"bucket": "lake", "raw_key": rawKey, "rows": state.Rows + rows})
 	})
 
-	// Step 2a (Fan-Out Branch 1): Reads Step 1 output via info.DependencyOutputs["ingest-parquet"]
+	// Step 2a (Fan-Out Branch 1): Fetches S3 object by key from Step 1 and validates schema
 	reg.Register("validate-schema", func(ctx context.Context, _ json.RawMessage) (json.RawMessage, error) {
 		info, _ := workerclient.TaskFromContext(ctx)
-		var ingested struct{ Rows int \`json:"rows"\` }
+		var ingested struct {
+			Bucket string \`json:"bucket"\`
+			RawKey string \`json:"raw_key"\`
+		}
 		_ = json.Unmarshal(info.DependencyOutputs["ingest-parquet"], &ingested)
-		return json.Marshal(map[string]any{"valid": ingested.Rows > 0, "checked_rows": ingested.Rows})
+
+		obj, err := s3c.GetObject(ctx, &s3.GetObjectInput{Bucket: &ingested.Bucket, Key: &ingested.RawKey})
+		if err != nil {
+			return nil, err
+		}
+		defer obj.Body.Close()
+		valid, rowCount, err := verifyParquetStream(obj.Body)
+		if err != nil {
+			return nil, err
+		}
+		return json.Marshal(map[string]any{"valid": valid, "checked_rows": rowCount})
 	})
 
-	// Step 2b (Fan-Out Branch 2): Runs in parallel with 2a and 2c
+	// Step 2b (Fan-Out Branch 2): Downloads raw S3 object, hashes PII fields, writes curated S3 object
 	reg.Register("redact-pii", func(ctx context.Context, _ json.RawMessage) (json.RawMessage, error) {
 		info, _ := workerclient.TaskFromContext(ctx)
-		_ = info.DependencyOutputs["ingest-parquet"]
-		return json.RawMessage(\`{"clean_uri":"s3://lake/clean/run-1.parquet"}\`), nil
+		var ingested struct {
+			Bucket string \`json:"bucket"\`
+			RawKey string \`json:"raw_key"\`
+		}
+		_ = json.Unmarshal(info.DependencyOutputs["ingest-parquet"], &ingested)
+
+		records, err := downloadParquetRecords(ctx, s3c, ingested.Bucket, ingested.RawKey)
+		if err != nil {
+			return nil, err
+		}
+		for i := range records {
+			sum := sha256.Sum256([]byte(records[i].Email))
+			records[i].Email = hex.EncodeToString(sum[:])
+		}
+		cleanKey := fmt.Sprintf("curated/%s.parquet", info.WorkflowID)
+		buf := encodeParquetRecords(records)
+		_, err = s3c.PutObject(ctx, &s3.PutObjectInput{
+			Bucket: &ingested.Bucket, Key: &cleanKey, Body: bytes.NewReader(buf),
+		})
+		if err != nil {
+			return nil, err
+		}
+		return json.Marshal(map[string]any{"clean_key": cleanKey})
 	})
 
-	// Step 2c (Fan-Out Branch 3): Runs in parallel with 2a and 2b
+	// Step 2c (Fan-Out Branch 3): Reads S3 object, generates embeddings, and upserts to pgvector
 	reg.Register("build-vector-index", func(ctx context.Context, _ json.RawMessage) (json.RawMessage, error) {
 		info, _ := workerclient.TaskFromContext(ctx)
-		_ = info.DependencyOutputs["ingest-parquet"]
-		return json.RawMessage(\`{"index_uri":"s3://lake/index/run-1.faiss"}\`), nil
+		var ingested struct {
+			Bucket string \`json:"bucket"\`
+			RawKey string \`json:"raw_key"\`
+		}
+		_ = json.Unmarshal(info.DependencyOutputs["ingest-parquet"], &ingested)
+
+		records, err := downloadParquetRecords(ctx, s3c, ingested.Bucket, ingested.RawKey)
+		if err != nil {
+			return nil, err
+		}
+		count, err := upsertPgVectorBatch(ctx, db, records)
+		if err != nil {
+			return nil, err
+		}
+		return json.Marshal(map[string]any{"indexed_vectors": count})
 	})
 
-	// Step 3 (Fan-In Join): Receives outputs from all three upstream branches in info.DependencyOutputs
+	// Step 3 (Fan-In Join): Reads outputs of 2a, 2b, and 2c and inserts snapshot into Postgres catalog
 	reg.Register("commit-snapshot", func(ctx context.Context, _ json.RawMessage) (json.RawMessage, error) {
 		info, _ := workerclient.TaskFromContext(ctx)
-		return json.Marshal(map[string]json.RawMessage{
-			"schema": info.DependencyOutputs["validate-schema"],
-			"clean":  info.DependencyOutputs["redact-pii"],
-			"index":  info.DependencyOutputs["build-vector-index"],
-		})
-	})
+		var schema struct{ CheckedRows int \`json:"checked_rows"\` }
+		var clean struct{ CleanKey string \`json:"clean_key"\` }
+		var index struct{ IndexedVectors int \`json:"indexed_vectors"\` }
+		_ = json.Unmarshal(info.DependencyOutputs["validate-schema"], &schema)
+		_ = json.Unmarshal(info.DependencyOutputs["redact-pii"], &clean)
+		_ = json.Unmarshal(info.DependencyOutputs["build-vector-index"], &index)
 
-	w := workerclient.New("n1:9090,n2:9090,n3:9090", workerclient.Options{Registry: reg, MaxConcurrency: 8})
-	_ = w.Run(context.Background())
+		_, err := db.ExecContext(ctx,
+			\`INSERT INTO catalog_snapshots (workflow_id, s3_key, row_count, vector_count) VALUES ($1, $2, $3, $4)\`,
+			info.WorkflowID, clean.CleanKey, schema.CheckedRows, index.IndexedVectors,
+		)
+		if err != nil {
+			return nil, err
+		}
+		return json.Marshal(map[string]any{"published_key": clean.CleanKey, "rows": schema.CheckedRows})
+	})
 }`,
         json: `{
   "name": "batch-vector-etl",
@@ -1184,48 +1290,67 @@ func main() {
       },
       ml: {
         nodes: [
-          [{ id: "prep", title: "1. snapshot-dataset", meta: "root • undo: purge-snapshot", progress: 100, status: "COMPLETED" }],
+          [{ id: "prep", title: "1. snapshot-dataset", meta: "DuckDB -> S3 • undo: S3 delete", progress: 100, status: "COMPLETED" }],
           [
-            { id: "train", title: "2a. finetune-model", meta: "fan-out: depends_on [1]", progress: 100, status: "COMPLETED" },
-            { id: "eval", title: "2b. safety-evaluation", meta: "fan-out: depends_on [1]", progress: 100, status: "COMPLETED" }
+            { id: "train", title: "2a. finetune-model", meta: "S3 read -> GPU -> S3 weights", progress: 100, status: "COMPLETED" },
+            { id: "eval", title: "2b. safety-evaluation", meta: "S3 read -> benchmark -> DB", progress: 100, status: "COMPLETED" }
           ],
           [{ id: "gate", title: "3. await-approval", meta: "fan-in + wait_for_signal", progress: 100, status: "COMPLETED" }],
-          [{ id: "deploy", title: "4. promote-canary", meta: "when: approved == true", progress: 100, status: "COMPLETED" }]
+          [{ id: "deploy", title: "4. promote-canary", meta: "update Redis serving pointer", progress: 100, status: "COMPLETED" }]
         ],
-        python: `import asyncio
-from plexus_flow import Worker, TaskContext, WorkflowClient
+        python: `import asyncio, boto3, duckdb, redis
+from plexus_flow import Worker, TaskContext
 
+s3 = boto3.client("s3")
+rds = redis.Redis(host="localhost", port=6379, decode_responses=True)
 worker = Worker("localhost:9090", worker_id="ml-worker-1", max_concurrency=4)
 
-# Step 1 (Root) + its compensating rollback handler
+# Step 1 (Root): Exports a frozen training split to S3; compensation deletes the S3 object on rollback
 @worker.activity("snapshot")
 async def snapshot_dataset(ctx: TaskContext, payload: dict) -> dict:
-    return {"snapshot_uri": f"{payload['dataset']}@snap-1"}
+    dataset_key = f"splits/{ctx.workflow_id}/train.parquet"
+    duckdb.sql(f"COPY (SELECT * FROM '{payload['source_uri']}' WHERE split='train') TO '/tmp/train.parquet'")
+    s3.upload_file("/tmp/train.parquet", payload["bucket"], dataset_key)
+    return {"bucket": payload["bucket"], "dataset_key": dataset_key}
 
 @worker.activity("purge-snapshot")
-async def purge_snapshot(ctx: TaskContext, snapshot: dict) -> dict:
-    return {"purged": snapshot["snapshot_uri"]}
+async def purge_snapshot(ctx: TaskContext, snap: dict) -> dict:
+    s3.delete_object(Bucket=snap["bucket"], Key=snap["dataset_key"])
+    return {"deleted_key": snap["dataset_key"]}
 
-# Step 2a & 2b (Fan-Out): Train and evaluate in parallel using Step 1's snapshot
+# Step 2a (Fan-Out): Downloads the S3 split from Step 1, fine-tunes weights, uploads checkpoint to S3
 @worker.activity("finetune")
 async def finetune_model(ctx: TaskContext, payload: dict) -> dict:
     snap = ctx.dependency_outputs["snapshot-dataset"]
-    return {"weights_uri": "s3://models/encoder-v2.pt", "source": snap["snapshot_uri"]}
+    s3.download_file(snap["bucket"], snap["dataset_key"], "/tmp/train.parquet")
 
+    weights_path, val_loss = run_pytorch_finetune("/tmp/train.parquet", epochs=3)
+    weights_key = f"models/{ctx.workflow_id}/model.safetensors"
+    s3.upload_file(weights_path, snap["bucket"], weights_key)
+    return {"bucket": snap["bucket"], "weights_key": weights_key, "val_loss": val_loss}
+
+# Step 2b (Fan-Out): Runs safety evaluation against the dataset in parallel with Step 2a
 @worker.activity("evaluate")
 async def safety_evaluation(ctx: TaskContext, payload: dict) -> dict:
     snap = ctx.dependency_outputs["snapshot-dataset"]
-    return {"pass_rate": 0.99, "evaluated_on": snap["snapshot_uri"]}
+    s3.download_file(snap["bucket"], snap["dataset_key"], "/tmp/eval.parquet")
+    pass_rate = evaluate_safety_suite("/tmp/eval.parquet")
+    return {"pass_rate": pass_rate}
 
-# Step 3 (Fan-In Signal Gate): Handled by the Raft FSM via "wait_for_signal": "release".
-# When signaled via HTTP/client, the signal payload becomes Step 3's output:
-# client.signal_workflow("release-encoder-v2", "release", {"approved": True, "reviewer": "alice"})
+# Step 3 ("await-approval") pauses in the Raft FSM until an external signal arrives:
+# POST /api/v1/workflows/{id}/signal {"signal": "release", "payload": {"approved": true, "reviewer": "alice"}}
 
-# Step 4: Runs only if Step 3's signal payload has approved == True
+# Step 4: Reads model weights key from Step 2a + reviewer from Step 3 and updates Redis serving config
 @worker.activity("promote")
 async def promote_canary(ctx: TaskContext, payload: dict) -> dict:
     approval = ctx.dependency_outputs["await-approval"]
-    return {"deployed": True, "approved_by": approval["reviewer"]}
+    trained  = ctx.dependency_outputs["finetune-model"]
+    rds.hset("serving:canary", mapping={
+        "s3_bucket": trained["bucket"],
+        "weights_key": trained["weights_key"],
+        "approved_by": approval["reviewer"],
+    })
+    return {"active_weights": trained["weights_key"], "approved_by": approval["reviewer"]}
 
 asyncio.run(worker.run())`,
         go: `package main
@@ -1233,44 +1358,98 @@ asyncio.run(worker.run())`,
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"os"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/redis/go-redis/v9"
 	"github.com/avivklas/plexus-flow/pkg/worker"
 	"github.com/avivklas/plexus-flow/pkg/workerclient"
 )
 
-func main() {
-	reg := worker.NewRegistry()
-
-	// Step 1 (Root) + Compensating action
+func registerMLActivities(reg *worker.Registry, s3c *s3.Client, rdb *redis.Client) {
+	// Step 1 (Root): Uploads training dataset snapshot to S3; compensation deletes the S3 object
 	reg.Register("snapshot", func(ctx context.Context, in json.RawMessage) (json.RawMessage, error) {
-		return json.RawMessage(\`{"snapshot_uri":"s3://datasets/train-v4@snap-1"}\`), nil
-	})
-	reg.Register("purge-snapshot", func(ctx context.Context, in json.RawMessage) (json.RawMessage, error) {
-		return json.RawMessage(\`{"purged":true}\`), nil
+		info, _ := workerclient.TaskFromContext(ctx)
+		bucket := "ml-artifacts"
+		key := fmt.Sprintf("splits/%s/train.parquet", info.WorkflowID)
+		f, err := ExportTrainingSplit(ctx, in)
+		if err != nil {
+			return nil, err
+		}
+		defer f.Close()
+		if _, err := s3c.PutObject(ctx, &s3.PutObjectInput{Bucket: &bucket, Key: &key, Body: f}); err != nil {
+			return nil, err
+		}
+		return json.Marshal(map[string]any{"bucket": bucket, "dataset_key": key})
 	})
 
-	// Step 2a & 2b (Fan-Out): Both depend on "snapshot-dataset" and execute concurrently
+	reg.Register("purge-snapshot", func(ctx context.Context, stepOut json.RawMessage) (json.RawMessage, error) {
+		var snap struct {
+			Bucket string \`json:"bucket"\`
+			Key    string \`json:"dataset_key"\`
+		}
+		_ = json.Unmarshal(stepOut, &snap)
+		_, err := s3c.DeleteObject(ctx, &s3.DeleteObjectInput{Bucket: &snap.Bucket, Key: &snap.Key})
+		return json.RawMessage(\`{"purged":true}\`), err
+	})
+
+	// Step 2a (Fan-Out): Downloads dataset from S3 by key, runs training, uploads weights to S3
 	reg.Register("finetune", func(ctx context.Context, _ json.RawMessage) (json.RawMessage, error) {
 		info, _ := workerclient.TaskFromContext(ctx)
-		_ = info.DependencyOutputs["snapshot-dataset"]
-		return json.RawMessage(\`{"weights_uri":"s3://models/encoder-v2.pt"}\`), nil
+		var snap struct {
+			Bucket string \`json:"bucket"\`
+			Key    string \`json:"dataset_key"\`
+		}
+		_ = json.Unmarshal(info.DependencyOutputs["snapshot-dataset"], &snap)
+
+		obj, err := s3c.GetObject(ctx, &s3.GetObjectInput{Bucket: &snap.Bucket, Key: &snap.Key})
+		if err != nil {
+			return nil, err
+		}
+		defer obj.Body.Close()
+
+		weightsFile, err := RunTrainingJob(ctx, obj.Body)
+		if err != nil {
+			return nil, err
+		}
+		defer os.Remove(weightsFile.Name())
+
+		weightsKey := fmt.Sprintf("models/%s/model.safetensors", info.WorkflowID)
+		if _, err := s3c.PutObject(ctx, &s3.PutObjectInput{Bucket: &snap.Bucket, Key: &weightsKey, Body: weightsFile}); err != nil {
+			return nil, err
+		}
+		return json.Marshal(map[string]any{"bucket": snap.Bucket, "weights_key": weightsKey})
 	})
+
+	// Step 2b (Fan-Out): Downloads dataset from S3 and runs safety evaluation in parallel
 	reg.Register("evaluate", func(ctx context.Context, _ json.RawMessage) (json.RawMessage, error) {
 		info, _ := workerclient.TaskFromContext(ctx)
-		_ = info.DependencyOutputs["snapshot-dataset"]
-		return json.RawMessage(\`{"pass_rate":0.99}\`), nil
+		var snap struct {
+			Bucket string \`json:"bucket"\`
+			Key    string \`json:"dataset_key"\`
+		}
+		_ = json.Unmarshal(info.DependencyOutputs["snapshot-dataset"], &snap)
+		passRate, err := EvaluateSafetyOnS3Split(ctx, s3c, snap.Bucket, snap.Key)
+		if err != nil {
+			return nil, err
+		}
+		return json.Marshal(map[string]any{"pass_rate": passRate})
 	})
 
-	// Step 3 ("await-approval") is a declarative WaitForSignal step resolved by the engine when
-	// POST /api/v1/workflows/{id}/signal {"signal":"release","payload":{"approved":true}} arrives.
-
-	// Step 4: Reads the signal payload from info.DependencyOutputs["await-approval"]
+	// Step 4: Updates Redis serving pointer using weights from Step 2a and approval signal from Step 3
 	reg.Register("promote", func(ctx context.Context, _ json.RawMessage) (json.RawMessage, error) {
 		info, _ := workerclient.TaskFromContext(ctx)
-		return info.DependencyOutputs["await-approval"], nil
-	})
+		var trained struct{ WeightsKey string \`json:"weights_key"\` }
+		var approval struct{ Reviewer string \`json:"reviewer"\` }
+		_ = json.Unmarshal(info.DependencyOutputs["finetune-model"], &trained)
+		_ = json.Unmarshal(info.DependencyOutputs["await-approval"], &approval)
 
-	w := workerclient.New("localhost:9090", workerclient.Options{Registry: reg, MaxConcurrency: 4})
-	_ = w.Run(context.Background())
+		err := rdb.HSet(ctx, "serving:canary", "weights_key", trained.WeightsKey, "approved_by", approval.Reviewer).Err()
+		if err != nil {
+			return nil, err
+		}
+		return json.Marshal(map[string]any{"active_weights": trained.WeightsKey, "approved_by": approval.Reviewer})
+	})
 }`,
         json: `{
   "name": "model-release-pipeline",
@@ -1311,86 +1490,171 @@ func main() {
       },
       saga: {
         nodes: [
-          [{ id: "reserve", title: "1. reserve-inventory", meta: "undo: release-inventory", progress: 100, status: "COMPLETED" }],
-          [{ id: "charge", title: "2. charge-payment", meta: "undo: refund-payment", progress: 100, status: "COMPLETED" }],
-          [{ id: "ship", title: "3. ship-order", meta: "depends_on: [charge-payment]", progress: 100, status: "COMPLETED" }]
+          [{ id: "reserve", title: "1. reserve-inventory", meta: "Postgres tx • undo: SQL restore", progress: 100, status: "COMPLETED" }],
+          [{ id: "charge", title: "2. charge-payment", meta: "Stripe API • undo: Stripe refund", progress: 100, status: "COMPLETED" }],
+          [{ id: "ship", title: "3. ship-order", meta: "Carrier API + DB update", progress: 100, status: "COMPLETED" }]
         ],
-        python: `import asyncio
+        python: `import asyncio, psycopg, stripe
 from plexus_flow import Worker, TaskContext, ActivityFailure
 
+db = psycopg.connect("postgresql://postgres@localhost:5432/commerce")
 worker = Worker("localhost:9090", worker_id="order-worker-1", max_concurrency=4)
 
-# Step 1 + Compensation
+# Step 1: Decrements stock and creates a reservation row in Postgres; compensation restores stock
 @worker.activity("reserve-inventory")
 async def reserve_inventory(ctx: TaskContext, order: dict) -> dict:
-    return {"reservation_id": "res_801", "sku": order["sku"]}
+    with db.transaction():
+        row = db.execute(
+            "UPDATE inventory SET available = available - %s WHERE sku = %s AND available >= %s RETURNING sku",
+            (order["qty"], order["sku"], order["qty"]),
+        ).fetchone()
+        if not row:
+            raise ActivityFailure("insufficient stock", code="OUT_OF_STOCK", retryable=False)
+        res_id = db.execute(
+            "INSERT INTO reservations (workflow_id, sku, qty) VALUES (%s, %s, %s) RETURNING id",
+            (ctx.workflow_id, order["sku"], order["qty"]),
+        ).fetchone()[0]
+    return {"reservation_id": res_id, "sku": order["sku"], "qty": order["qty"]}
 
 @worker.activity("release-inventory")
 async def release_inventory(ctx: TaskContext, reserved: dict) -> dict:
-    return {"released": reserved["reservation_id"]}
+    with db.transaction():
+        db.execute("DELETE FROM reservations WHERE id = %s", (reserved["reservation_id"],))
+        db.execute("UPDATE inventory SET available = available + %s WHERE sku = %s", (reserved["qty"], reserved["sku"]))
+    return {"released_reservation_id": reserved["reservation_id"]}
 
-# Step 2 (depends on Step 1) + Compensation
+# Step 2: Charges customer via Stripe using ctx.task_id as idempotency key; compensation issues refund
 @worker.activity("charge-payment")
 async def charge_payment(ctx: TaskContext, order: dict) -> dict:
     res = ctx.dependency_outputs["reserve-inventory"]
-    return {"charge_id": "ch_1042", "reservation_id": res["reservation_id"]}
+    intent = stripe.PaymentIntent.create(
+        amount=order["amount_cents"],
+        currency="usd",
+        customer=order["customer_id"],
+        confirm=True,
+        metadata={"reservation_id": res["reservation_id"]},
+        idempotency_key=ctx.task_id,
+    )
+    return {"payment_intent_id": intent.id, "amount_cents": order["amount_cents"]}
 
 @worker.activity("refund-payment")
 async def refund_payment(ctx: TaskContext, charged: dict) -> dict:
-    return {"refunded": charged["charge_id"]}
+    refund = stripe.Refund.create(payment_intent=charged["payment_intent_id"], idempotency_key=ctx.task_id)
+    return {"refund_id": refund.id}
 
-# Step 3 (depends on Step 2): Raising a non-retryable code triggers LIFO rollback (Step 2 -> Step 1)
+# Step 3: Books shipment with carrier API and updates order status in Postgres
 @worker.activity("ship-order")
 async def ship_order(ctx: TaskContext, order: dict) -> dict:
-    if order.get("invalid_address"):
-        raise ActivityFailure("undeliverable address", code="ERR_ADDRESS", retryable=False)
+    if not verify_postal_address(order["address"]):
+        raise ActivityFailure("carrier rejected address", code="ERR_ADDRESS", retryable=False)
+
     charge = ctx.dependency_outputs["charge-payment"]
-    return {"tracking_id": "TRK-100", "charge_id": charge["charge_id"]}
+    tracking_no = carrier_api.create_label(order["address"], sku=order["sku"])
+    db.execute(
+        "UPDATE orders SET status = 'SHIPPED', tracking_no = %s, payment_id = %s WHERE id = %s",
+        (tracking_no, charge["payment_intent_id"], order["order_id"]),
+    )
+    db.commit()
+    return {"tracking_no": tracking_no}
 
 asyncio.run(worker.run())`,
         go: `package main
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"github.com/avivklas/plexus-flow/pkg/worker"
 	"github.com/avivklas/plexus-flow/pkg/workerclient"
 )
 
-func main() {
-	reg := worker.NewRegistry()
-
-	// Step 1 + Compensation (receives Step 1's output as input during rollback)
+func registerOrderSaga(reg *worker.Registry, db *sql.DB, payments PaymentClient, carrier CarrierClient) {
+	// Step 1: Reserves stock in Postgres inside a transaction; compensation restores stock
 	reg.Register("reserve-inventory", func(ctx context.Context, in json.RawMessage) (json.RawMessage, error) {
-		return json.RawMessage(\`{"reservation_id":"res_801"}\`), nil
-	})
-	reg.Register("release-inventory", func(ctx context.Context, stepOut json.RawMessage) (json.RawMessage, error) {
-		return json.RawMessage(\`{"released":true}\`), nil
+		info, _ := workerclient.TaskFromContext(ctx)
+		var order struct {
+			SKU string \`json:"sku"\`
+			Qty int    \`json:"qty"\`
+		}
+		_ = json.Unmarshal(in, &order)
+
+		var resID int64
+		err := db.QueryRowContext(ctx,
+			\`UPDATE inventory SET available = available - $1 WHERE sku = $2 AND available >= $1
+			 RETURNING (SELECT id FROM insert_reservation($2, $1, $3))\`,
+			order.Qty, order.SKU, info.WorkflowID,
+		).Scan(&resID)
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, worker.NewCodedError("OUT_OF_STOCK", errors.New("insufficient inventory"))
+		}
+		return json.Marshal(map[string]any{"reservation_id": resID, "sku": order.SKU, "qty": order.Qty})
 	})
 
-	// Step 2 + Compensation
+	reg.Register("release-inventory", func(ctx context.Context, stepOut json.RawMessage) (json.RawMessage, error) {
+		var res struct {
+			ReservationID int64  \`json:"reservation_id"\`
+			SKU           string \`json:"sku"\`
+			Qty           int    \`json:"qty"\`
+		}
+		_ = json.Unmarshal(stepOut, &res)
+		_, err := db.ExecContext(ctx,
+			\`DELETE FROM reservations WHERE id = $1; UPDATE inventory SET available = available + $2 WHERE sku = $3\`,
+			res.ReservationID, res.Qty, res.SKU,
+		)
+		return json.RawMessage(\`{"released":true}\`), err
+	})
+
+	// Step 2: Charges card via payment gateway; compensation refunds the charge ID
 	reg.Register("charge-payment", func(ctx context.Context, in json.RawMessage) (json.RawMessage, error) {
 		info, _ := workerclient.TaskFromContext(ctx)
-		_ = info.DependencyOutputs["reserve-inventory"]
-		return json.RawMessage(\`{"charge_id":"ch_1042"}\`), nil
-	})
-	reg.Register("refund-payment", func(ctx context.Context, stepOut json.RawMessage) (json.RawMessage, error) {
-		return json.RawMessage(\`{"refunded":true}\`), nil
-	})
-
-	// Step 3: Returning ERR_ADDRESS skips retries and compensates Step 2 then Step 1
-	reg.Register("ship-order", func(ctx context.Context, in json.RawMessage) (json.RawMessage, error) {
-		var req struct{ InvalidAddress bool \`json:"invalid_address"\` }
-		_ = json.Unmarshal(in, &req)
-		if req.InvalidAddress {
-			return nil, worker.NewCodedError("ERR_ADDRESS", errors.New("undeliverable address"))
+		var order struct {
+			CustomerID  string \`json:"customer_id"\`
+			AmountCents int64  \`json:"amount_cents"\`
 		}
-		return json.RawMessage(\`{"tracking_id":"TRK-100"}\`), nil
+		_ = json.Unmarshal(in, &order)
+
+		chargeID, err := payments.Charge(ctx, order.CustomerID, order.AmountCents, info.TaskID)
+		if err != nil {
+			return nil, err
+		}
+		return json.Marshal(map[string]any{"payment_intent_id": chargeID})
 	})
 
-	w := workerclient.New("localhost:9090", workerclient.Options{Registry: reg, MaxConcurrency: 4})
-	_ = w.Run(context.Background())
+	reg.Register("refund-payment", func(ctx context.Context, stepOut json.RawMessage) (json.RawMessage, error) {
+		info, _ := workerclient.TaskFromContext(ctx)
+		var charged struct{ PaymentIntentID string \`json:"payment_intent_id"\` }
+		_ = json.Unmarshal(stepOut, &charged)
+		refundID, err := payments.Refund(ctx, charged.PaymentIntentID, info.TaskID)
+		if err != nil {
+			return nil, err
+		}
+		return json.Marshal(map[string]any{"refund_id": refundID})
+	})
+
+	// Step 3: Books carrier shipment and updates order row in Postgres
+	reg.Register("ship-order", func(ctx context.Context, in json.RawMessage) (json.RawMessage, error) {
+		info, _ := workerclient.TaskFromContext(ctx)
+		var order struct {
+			OrderID int64  \`json:"order_id"\`
+			Address string \`json:"address"\`
+		}
+		_ = json.Unmarshal(in, &order)
+		var charged struct{ PaymentIntentID string \`json:"payment_intent_id"\` }
+		_ = json.Unmarshal(info.DependencyOutputs["charge-payment"], &charged)
+
+		trackingNo, err := carrier.CreateLabel(ctx, order.Address)
+		if errors.Is(err, ErrInvalidPostalAddress) {
+			return nil, worker.NewCodedError("ERR_ADDRESS", err)
+		} else if err != nil {
+			return nil, err
+		}
+		_, err = db.ExecContext(ctx,
+			\`UPDATE orders SET status = 'SHIPPED', tracking_no = $1, payment_id = $2 WHERE id = $3\`,
+			trackingNo, charged.PaymentIntentID, order.OrderID,
+		)
+		return json.Marshal(map[string]any{"tracking_no": trackingNo}), err
+	})
 }`,
         json: `{
   "name": "order-fulfillment-saga",
