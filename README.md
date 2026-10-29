@@ -3,12 +3,13 @@
 [![Go Version](https://img.shields.io/badge/go-1.27+-blue.svg)](https://golang.org)
 [![Consensus](https://img.shields.io/badge/consensus-Raft%20Graph-orange.svg)](https://github.com/avivklas/plexus)
 [![Semantics](https://img.shields.io/badge/semantics-Exactly--Once%20(EOS)-green.svg)](https://github.com/avivklas/plexus)
+[![Website & Docs](https://img.shields.io/badge/docs-GitHub%20Pages-6366f1.svg)](https://avivklas.github.io/plexus-flow/)
 
 **Distributed Sagas & Multi-Step Workflow Orchestration without Temporal, Kafka, or fragile Redis locks.**
 
 `plexus-flow` is a distributed workflow engine built on the **Plexus Raft Graph**. Start as a single binary with zero external dependencies, and independently scale any step horizontally by spinning up stateless worker processes—without managing service discovery, inter-service RPCs, message brokers, or distributed locks.
 
-> 📚 **[Explore the Interactive Landing Page (`docs/index.html`)](docs/index.html)** | **[Read the Full Developer Documentation (`docs/docs.html`)](docs/docs.html)**
+> 🌐 **[Live Interactive Website & Pipeline Simulator](https://avivklas.github.io/plexus-flow/)** | 📚 **[Full Developer Documentation](https://avivklas.github.io/plexus-flow/docs.html)**
 >
 > Curious how `plexus-flow` solves dual writes, zombie workers, and split-brain without external brokers—and what the trade-offs are? Jump to [**Under the Hood: Distributed Systems Guarantees & Trade-offs**](#under-the-hood-distributed-systems-guarantees--trade-offs).
 
