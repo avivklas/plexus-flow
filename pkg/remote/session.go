@@ -1,10 +1,12 @@
 package remote
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"time"
 
+	"github.com/avivklas/plexus-flow/pkg/flowstore"
 	"github.com/avivklas/plexus-flow/pkg/remote/workerpb"
 )
 
@@ -90,6 +92,18 @@ func (s *Session) HeartbeatWithProgress(hb *workerpb.Heartbeat) {
 	if wfID != "" && len(prog) > 0 {
 		if ps, ok := b.opt.Flows.(ProgressStore); ok {
 			ps.UpdateStepProgressLocal(wfID, step, prog)
+		}
+		if b.opt.Applier != nil {
+			go func(workflowID, stepName string, progress []byte) {
+				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancel()
+				_, _ = b.opt.Applier.Apply(ctx, flowstore.CmdUpdateStepProgress, flowstore.UpdateStepProgressRequest{
+					WorkflowID: workflowID,
+					StepName:   stepName,
+					Progress:   progress,
+					At:         time.Now().UTC(),
+				})
+			}(wfID, step, prog)
 		}
 	}
 }

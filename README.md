@@ -8,6 +8,8 @@
 
 `plexus-flow` is a distributed workflow engine built on the **Plexus Raft Graph**. Start as a single binary with zero external dependencies, and independently scale any step horizontally by spinning up stateless worker processes—without managing service discovery, inter-service RPCs, message brokers, or distributed locks.
 
+> 📚 **[Explore the Interactive Landing Page (`docs/index.html`)](docs/index.html)** | **[Read the Full Developer Documentation (`docs/docs.html`)](docs/docs.html)**
+>
 > Curious how `plexus-flow` solves dual writes, zombie workers, and split-brain without external brokers—and what the trade-offs are? Jump to [**Under the Hood: Distributed Systems Guarantees & Trade-offs**](#under-the-hood-distributed-systems-guarantees--trade-offs).
 
 ---
@@ -80,7 +82,7 @@ A service built with `plexus-flow` is **self-describing**—just as a REST API s
 Every node serves the interactive dashboard out of the box at `/`:
 
 ```bash
-go run ./cmd/plexus-flow --run-example --simulate-failure --fail-step ship-item
+go run ./examples/ordersaga --simulate-failure --fail-step ship-order --serve --http-addr 127.0.0.1:8080
 # open http://127.0.0.1:8080
 ```
 
@@ -98,15 +100,33 @@ The exact same graph overlaid with a real execution: the path taken is highlight
 
 ## Quick Start
 
+### 1. Run the Production Server
+
 ```bash
-# Build
+# Build the production server binary
 go build -o bin/plexus-flow ./cmd/plexus-flow
 
-# Run happy-path Saga demo
-./bin/plexus-flow --run-example
+# Start a single-node server (HTTP API & Web UI on :8080, gRPC Worker Broker on :9090)
+./bin/plexus-flow \
+  --id node-1 \
+  --http-addr :8080 \
+  --grpc-addr :9090 \
+  --raft-addr 127.0.0.1:7001 \
+  --act-raft-addr 127.0.0.1:7002 \
+  --data-dir ./data/node-1
+```
 
-# Run automatic Saga rollback demo (simulates failure & reverse-order compensation)
-./bin/plexus-flow --run-example --simulate-failure --fail-step charge-card
+### 2. Run the Standalone Showcase Examples
+
+```bash
+# Run happy-path E-Commerce Order Fulfillment Saga
+go run ./examples/ordersaga
+
+# Run automatic LIFO Saga rollback demo (simulates failure & reverse-order compensation)
+go run ./examples/ordersaga --simulate-failure --fail-step charge-payment
+
+# Run Autonomous ML Canary Release Pipeline (Fork-Join DAG + Conditional Branching + Signal Gate + Cron)
+go run ./examples/mlrelease
 ```
 
 ---
@@ -277,10 +297,16 @@ No distributed system escapes the CAP and PACELC theorems. `plexus-flow` makes d
 
 ---
 
-## Testing
+## Testing & Fault-Tolerance Battle Suite
+
+Run the full unit, integration, cluster failover, and concurrency test suite (with the Go race detector enabled):
 
 ```bash
-go test -v ./...
+# Run all tests with race detection
+go test -race ./...
+
+# Run the 3-node Raft cluster failover, worker chaos, and concurrency battle-tests
+go test -v -race -run TestBattle ./test
 ```
 
 ---

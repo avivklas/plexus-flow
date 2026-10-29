@@ -334,7 +334,7 @@ func (b *Broker) Recover() {
 				}
 				found = append(found, &delivery{
 					kind: workerpb.TaskKind_TASK_KIND_COMPENSATION, workflowID: wf.WorkflowID, runID: wf.RunID, step: name,
-					activity: st.CompensatingAction, input: in, attempt: st.Attempt, retries: st.MaxRetries, timeout: st.Timeout,
+					activity: st.CompensatingAction, input: in, attempt: max(st.CompensationAttempt, 1), retries: st.MaxRetries, timeout: st.Timeout,
 				})
 			}
 		}
@@ -345,10 +345,10 @@ func (b *Broker) Recover() {
 			// No remote worker serves it: fall back to the local executor.
 			if d.kind == workerpb.TaskKind_TASK_KIND_ACTIVITY {
 				b.runLocalActivity(worker.ActivityTask{WorkflowID: d.workflowID, RunID: d.runID, StepName: d.step,
-					Activity: d.activity, Input: d.input, Timeout: d.timeout, Retries: d.retries, Attempt: d.attempt, Metadata: d.meta, DependencyOutputs: d.deps})
+					Activity: d.activity, Input: d.input, Timeout: d.timeout, Retries: d.retries, Attempt: max(d.attempt-1, 0), LastProgress: d.progress, Metadata: d.meta, DependencyOutputs: d.deps})
 			} else {
 				b.runLocalCompensation(worker.CompensationTask{WorkflowID: d.workflowID, RunID: d.runID, StepName: d.step,
-					Activity: d.activity, Input: d.input, Timeout: d.timeout, Retries: d.retries, Attempt: d.attempt})
+					Activity: d.activity, Input: d.input, Timeout: d.timeout, Retries: d.retries, Attempt: max(d.attempt-1, 0)})
 			}
 		})
 	}
@@ -455,7 +455,9 @@ func (b *Broker) dropAllLocked(reason string) {
 	b.pending = map[string][]*delivery{}
 	for _, s := range b.workers {
 		s.inflight = map[string]*delivery{}
+		s.closeLocked()
 	}
+	b.workers = map[string]*Session{}
 }
 
 // failReport returns a function that reports the failure of d to the workflow.

@@ -3,248 +3,197 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"flag"
 	"fmt"
 	"log"
 	"os"
 	"os/signal"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
 
 	"github.com/avivklas/plexus-flow/pkg/flow"
-	"github.com/avivklas/plexus-flow/pkg/flowstore"
-	"github.com/avivklas/plexus-flow/pkg/graphflow"
 	"github.com/avivklas/plexus-flow/pkg/server"
 	"github.com/avivklas/plexus-flow/pkg/worker"
 )
 
-// ANSI color codes for rich CLI presentation
-const (
-	colorReset  = "\033[0m"
-	colorRed    = "\033[31m"
-	colorGreen  = "\033[32m"
-	colorYellow = "\033[33m"
-	colorBlue   = "\033[34m"
-	colorPurple = "\033[35m"
-	colorCyan   = "\033[36m"
-	colorBold   = "\033[1m"
-)
+const version = "1.0.0"
 
 func main() {
 	var (
-		nodeID                = flag.String("id", "node-1", "Unique node identifier in cluster")
-		httpAddr              = flag.String("http-addr", "127.0.0.1:8080", "HTTP REST API listen address")
-		grpcAddr              = flag.String("grpc-addr", "127.0.0.1:9090", "gRPC address for remote activity workers (empty disables)")
-		raftAddr              = flag.String("raft-addr", "127.0.0.1:9000", "Raft consensus listen address for workflow state")
-		actRaftAddr           = flag.String("act-raft-addr", "", "Raft consensus listen address for activity dispatcher (default: raft-addr + 1)")
-		dataDir               = flag.String("data-dir", "./data", "Directory for persistent Raft logs and dedup records")
-		joinAddrs             = flag.String("join", "", "Comma-separated list of peer Raft addresses to join")
-		bootstrap             = flag.Bool("bootstrap", false, "Bootstrap this node as the initial cluster leader")
-		timerInterval         = flag.Duration("timer-interval", 100*time.Millisecond, "How often sleep, signal-wait, and retry-backoff timers are checked")
-		retentionTTL          = flag.Duration("retention-ttl", 0, "Evict terminal workflows older than this duration to cold archive (0 disables)")
-		maxCompletedWorkflows = flag.Int("max-completed-workflows", 0, "Cap hot terminal workflows in memory before compacting to cold archive (0 disables)")
-		runExample            = flag.Bool("run-example", false, "Run the built-in Order Processing Saga demonstration")
-		simulateFailure       = flag.Bool("simulate-failure", false, "Simulate a step failure to demonstrate automatic Saga rollback")
-		failStep              = flag.String("fail-step", "charge-card", "Which step to fail when simulating: 'charge-card' or 'ship-item'")
+		nodeID                = flag.String("id", envOr("PLEXUS_FLOW_NODE_ID", "node-1"), "Unique node identifier in the cluster")
+		httpAddr              = flag.String("http-addr", envOr("PLEXUS_FLOW_HTTP_ADDR", "127.0.0.1:8080"), "HTTP REST API & dashboard listen address (empty disables)")
+		grpcAddr              = flag.String("grpc-addr", envOr("PLEXUS_FLOW_GRPC_ADDR", "127.0.0.1:9090"), "gRPC listen address for remote activity workers (empty disables)")
+		raftAddr              = flag.String("raft-addr", envOr("PLEXUS_FLOW_RAFT_ADDR", "127.0.0.1:9000"), "Raft consensus listen address for workflow state")
+		actRaftAddr           = flag.String("act-raft-addr", envOr("PLEXUS_FLOW_ACT_RAFT_ADDR", ""), "Raft consensus listen address for activity dispatcher (default: raft-addr port + 1)")
+		advRaftAddr           = flag.String("advertise-raft-addr", envOr("PLEXUS_FLOW_ADVERTISE_RAFT_ADDR", ""), "Advertised Raft address for workflow state (defaults to raft-addr)")
+		advActRaftAddr        = flag.String("advertise-act-raft-addr", envOr("PLEXUS_FLOW_ADVERTISE_ACT_RAFT_ADDR", ""), "Advertised Raft address for activity dispatcher (defaults to act-raft-addr)")
+		dataDir               = flag.String("data-dir", envOr("PLEXUS_FLOW_DATA_DIR", "./data"), "Directory for persistent Raft logs, snapshots, cold archive, and dedup records")
+		joinAddrs             = flag.String("join", envOr("PLEXUS_FLOW_JOIN", ""), "Comma-separated list of peer workflow Raft addresses to join")
+		actJoinAddrs          = flag.String("act-join", envOr("PLEXUS_FLOW_ACT_JOIN", ""), "Comma-separated list of peer activity Raft addresses to join (default: derived from --join)")
+		bootstrap             = flag.Bool("bootstrap", envBool("PLEXUS_FLOW_BOOTSTRAP", false), "Bootstrap this node as the initial cluster seed")
+		timerInterval         = flag.Duration("timer-interval", envDuration("PLEXUS_FLOW_TIMER_INTERVAL", 100*time.Millisecond), "How often sleep, signal-wait, and retry-backoff timers are checked")
+		heartbeatInterval     = flag.Duration("heartbeat-interval", envDuration("PLEXUS_FLOW_HEARTBEAT_INTERVAL", 2*time.Second), "Remote worker heartbeat interval")
+		defaultStepTimeout    = flag.Duration("default-step-timeout", envDuration("PLEXUS_FLOW_DEFAULT_STEP_TIMEOUT", 30*time.Second), "Default timeout for steps without an explicit timeout")
+		retentionTTL          = flag.Duration("retention-ttl", envDuration("PLEXUS_FLOW_RETENTION_TTL", 0), "Evict terminal workflows older than this duration to cold archive (0 disables)")
+		maxCompletedWorkflows = flag.Int("max-completed-workflows", envInt("PLEXUS_FLOW_MAX_COMPLETED_WORKFLOWS", 0), "Cap hot terminal workflows in memory before compacting to cold archive (0 disables)")
+		flowsPath             = flag.String("flows", envOr("PLEXUS_FLOW_FLOWS", ""), "Optional file or directory of JSON workflow definitions to register at startup")
+		showVersion           = flag.Bool("version", false, "Print version information and exit")
 	)
 	flag.Parse()
 
-	printBanner()
+	if *showVersion {
+		fmt.Printf("plexus-flow v%s\n", version)
+		return
+	}
 
 	registry := worker.NewRegistry()
-	registerOrderSagaActivities(registry, *simulateFailure, *failStep)
-
-	var join []string
-	if *joinAddrs != "" {
-		join = strings.Split(*joinAddrs, ",")
-	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	log.Printf("%s[Consensus]%s Starting node %s and waiting for Raft leadership...", colorBlue, colorReset, *nodeID)
+	log.Printf("[plexus-flow] starting node=%s raft=%s http=%s grpc=%s data=%s",
+		*nodeID, *raftAddr, *httpAddr, *grpcAddr, *dataDir)
+
 	srv, err := server.Start(ctx, server.Options{
 		NodeID:                *nodeID,
 		HTTPAddr:              *httpAddr,
 		GRPCAddr:              *grpcAddr,
 		RaftAddr:              *raftAddr,
 		ActRaftAddr:           *actRaftAddr,
+		AdvertiseRaftAddr:     *advRaftAddr,
+		AdvertiseActRaftAddr:  *advActRaftAddr,
 		DataDir:               *dataDir,
-		Join:                  join,
+		Join:                  splitCSV(*joinAddrs),
+		ActJoin:               splitCSV(*actJoinAddrs),
 		Bootstrap:             *bootstrap,
 		Registry:              registry,
 		TimerInterval:         *timerInterval,
+		HeartbeatInterval:     *heartbeatInterval,
+		DefaultStepTimeout:    *defaultStepTimeout,
 		RetentionTTL:          *retentionTTL,
 		MaxCompletedWorkflows: *maxCompletedWorkflows,
 	})
 	if err != nil {
-		log.Fatalf("failed to start plexus-flow: %v", err)
+		log.Fatalf("[plexus-flow] failed to start server: %v", err)
 	}
 	defer srv.Close()
 
-	if err := srv.Coordinator.RegisterFlow(orderSagaDefinition()); err != nil {
-		log.Fatalf("failed to register flow: %v", err)
+	if *flowsPath != "" {
+		n, err := loadFlowDefinitions(srv, *flowsPath)
+		if err != nil {
+			log.Fatalf("[plexus-flow] failed to load flow definitions from %s: %v", *flowsPath, err)
+		}
+		log.Printf("[plexus-flow] registered %d flow definition(s) from %s", n, *flowsPath)
 	}
 
-	if *runExample {
-		go executeExampleSaga(srv.Coordinator, *simulateFailure, *failStep)
-	}
+	log.Printf("[plexus-flow] node %s ready (is_leader=%v)", *nodeID, srv.IsLeader())
 
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
-	<-sigCh
+	sig := <-sigCh
 
-	log.Printf("\n%s[Shutdown]%s Shutting down Plexus-Flow gracefully...", colorYellow, colorReset)
+	log.Printf("[plexus-flow] received %s, shutting down gracefully...", sig)
 }
 
-func printBanner() {
-	banner := `
-  ____  _                      _____ _                 
- |  _ \| |                    |  ___| | _____      __  
- | |_) | | _____  ___   _ ___ | |_  | |/ _ \ \ /\ / /  
- |  __/| |/ _ \ \/ / | | / __||  _| | | (_) \ V  V /   
- |_|   |_|\___/_/\_\ |_| \__ \|_|   |_|\___/ \_/\_/    
-                    \__,_|___/                         
-   Distributed Sagas & Workflows without Temporal or Kafka
-`
-	fmt.Printf("%s%s%s\n", colorCyan, banner, colorReset)
-}
-
-func registerOrderSagaActivities(r *worker.Registry, simFail bool, failStepName string) {
-	// Step 1: Reserve Inventory
-	r.Register("reserve-inventory", func(ctx context.Context, input json.RawMessage) (json.RawMessage, error) {
-		log.Printf("%s  [ACTIVITY] reserve-inventory -> RESERVING item ITEM-42 for Order...%s", colorBlue, colorReset)
-		time.Sleep(100 * time.Millisecond)
-		log.Printf("%s  [ACTIVITY] reserve-inventory -> SUCCESS: Inventory reserved!%s", colorGreen, colorReset)
-		return json.RawMessage(`{"reserved": true, "sku": "ITEM-42", "qty": 1}`), nil
-	})
-
-	// Compensation 1: Release Inventory
-	r.Register("release-inventory", func(ctx context.Context, input json.RawMessage) (json.RawMessage, error) {
-		log.Printf("%s  [COMPENSATION] release-inventory -> RELEASING item ITEM-42 back to stock...%s", colorPurple, colorReset)
-		time.Sleep(80 * time.Millisecond)
-		log.Printf("%s  [COMPENSATION] release-inventory -> SUCCESS: Inventory released back to stock!%s", colorGreen, colorReset)
-		return json.RawMessage(`{"released": true}`), nil
-	})
-
-	// Step 2: Charge Card
-	r.Register("charge-card", func(ctx context.Context, input json.RawMessage) (json.RawMessage, error) {
-		log.Printf("%s  [ACTIVITY] charge-card -> CHARGING credit card $149.99...%s", colorBlue, colorReset)
-		time.Sleep(120 * time.Millisecond)
-		if simFail && failStepName == "charge-card" {
-			log.Printf("%s  [ACTIVITY] charge-card -> ERROR: Card declined: insufficient funds!%s", colorRed, colorReset)
-			return nil, errors.New("card declined: insufficient funds")
-		}
-		log.Printf("%s  [ACTIVITY] charge-card -> SUCCESS: Card charged $149.99!%s", colorGreen, colorReset)
-		return json.RawMessage(`{"charged": true, "amount": 149.99, "tx_id": "TX-998877"}`), nil
-	})
-
-	// Compensation 2: Refund Card
-	r.Register("refund-card", func(ctx context.Context, input json.RawMessage) (json.RawMessage, error) {
-		log.Printf("%s  [COMPENSATION] refund-card -> REFUNDING $149.99 to credit card...%s", colorPurple, colorReset)
-		time.Sleep(80 * time.Millisecond)
-		log.Printf("%s  [COMPENSATION] refund-card -> SUCCESS: Full refund processed!%s", colorGreen, colorReset)
-		return json.RawMessage(`{"refunded": true}`), nil
-	})
-
-	// Step 3: Ship Item
-	r.Register("ship-item", func(ctx context.Context, input json.RawMessage) (json.RawMessage, error) {
-		log.Printf("%s  [ACTIVITY] ship-item -> CREATING shipping label with courier...%s", colorBlue, colorReset)
-		time.Sleep(100 * time.Millisecond)
-		if simFail && failStepName == "ship-item" {
-			log.Printf("%s  [ACTIVITY] ship-item -> ERROR: Shipping courier service unavailable!%s", colorRed, colorReset)
-			return nil, errors.New("shipping courier service unavailable")
-		}
-		log.Printf("%s  [ACTIVITY] ship-item -> SUCCESS: Package dispatched! Tracking: TRK-554433%s", colorGreen, colorReset)
-		return json.RawMessage(`{"shipped": true, "tracking": "TRK-554433"}`), nil
-	})
-
-	// Compensation 3: Cancel Shipment
-	r.Register("cancel-shipment", func(ctx context.Context, input json.RawMessage) (json.RawMessage, error) {
-		log.Printf("%s  [COMPENSATION] cancel-shipment -> VOIDING shipping label...%s", colorPurple, colorReset)
-		time.Sleep(60 * time.Millisecond)
-		log.Printf("%s  [COMPENSATION] cancel-shipment -> SUCCESS: Shipping label voided!%s", colorGreen, colorReset)
-		return json.RawMessage(`{"cancelled": true}`), nil
-	})
-}
-
-// orderSagaDefinition is the demo flow: reserve stock, charge, then ship, with
-// every step undone in reverse order if a later one fails.
-func orderSagaDefinition() flow.WorkflowDefinition {
-	return flow.WorkflowDefinition{
-		Name: "order-fulfillment-saga",
-		Steps: []flow.StepDefinition{
-			{Name: "reserve-inventory", Activity: "reserve-inventory", CompensatingAction: "release-inventory"},
-			{Name: "charge-card", Activity: "charge-card", CompensatingAction: "refund-card"},
-			{Name: "ship-item", Activity: "ship-item", CompensatingAction: "cancel-shipment"},
-		},
-	}
-}
-
-func executeExampleSaga(coord *graphflow.Coordinator, simFail bool, failStepName string) {
-	time.Sleep(500 * time.Millisecond)
-
-	fmt.Println()
-	log.Printf("%s========================================================================%s", colorCyan, colorReset)
-	log.Printf("%s[DEMO] Starting Order Processing Saga Demonstration...%s", colorBold, colorReset)
-	if simFail {
-		log.Printf("%s[DEMO] Mode: SIMULATED FAILURE on step '%s' (Triggering Automatic Saga Compensation)%s", colorYellow, failStepName, colorReset)
-	} else {
-		log.Printf("%s[DEMO] Mode: HAPPY PATH (All steps succeed)%s", colorGreen, colorReset)
-	}
-	log.Printf("%s========================================================================%s", colorCyan, colorReset)
-
-	def := orderSagaDefinition()
-
-	orderID := fmt.Sprintf("ORD-%d", time.Now().Unix()%10000)
-	inputData := map[string]any{
-		"order_id": orderID,
-		"customer": "Alice Smith",
-		"item":     "MacBook Pro M4",
-		"price":    149.99,
-	}
-	inputBytes, _ := json.Marshal(inputData)
-
-	ctx := context.Background()
-	wf, err := coord.StartWorkflow(ctx, flowstore.StartWorkflowRequest{
-		WorkflowID: orderID,
-		Definition: def,
-		Input:      inputBytes,
-		Metadata: map[string]string{
-			"channel": "web",
-		},
-	})
+func loadFlowDefinitions(srv *server.Server, path string) (int, error) {
+	info, err := os.Stat(path)
 	if err != nil {
-		log.Printf("[DEMO] Error starting workflow: %v", err)
-		return
+		return 0, err
 	}
-
-	log.Printf("%s[DEMO] Workflow started: ID=%s RunID=%s%s", colorCyan, wf.WorkflowID, wf.RunID, colorReset)
-
-	// Poll until terminal status
-	deadline := time.Now().Add(10 * time.Second)
-	for time.Now().Before(deadline) {
-		inst, exists := coord.GetWorkflow(orderID)
-		if exists && inst.IsTerminal() {
-			fmt.Println()
-			log.Printf("%s========================================================================%s", colorCyan, colorReset)
-			if inst.Status == flow.StatusCompleted {
-				log.Printf("%s[DEMO RESULT] SAGA FINISHED SUCCESSFULLY: Status = %s%s", colorGreen, inst.Status, colorReset)
-				log.Printf("%s[DEMO RESULT] All steps executed and committed via Raft Graph with EOS!%s", colorGreen, colorReset)
-			} else if inst.Status == flow.StatusCompensated {
-				log.Printf("%s[DEMO RESULT] SAGA ROLLED BACK SAFELY: Status = %s%s", colorPurple, inst.Status, colorReset)
-				log.Printf("%s[DEMO RESULT] Failed step triggered automatic reverse-order compensation!%s", colorPurple, colorReset)
-				log.Printf("%s[DEMO RESULT] No orphaned transactions. System returned to clean state.%s", colorPurple, colorReset)
-			} else {
-				log.Printf("%s[DEMO RESULT] Status: %s (Error: %s)%s", colorRed, inst.Status, inst.Error, colorReset)
-			}
-			log.Printf("%s========================================================================%s\n", colorCyan, colorReset)
-			return
+	var files []string
+	if info.IsDir() {
+		entries, err := os.ReadDir(path)
+		if err != nil {
+			return 0, err
 		}
-		time.Sleep(100 * time.Millisecond)
+		for _, e := range entries {
+			if !e.IsDir() && strings.HasSuffix(strings.ToLower(e.Name()), ".json") {
+				files = append(files, filepath.Join(path, e.Name()))
+			}
+		}
+	} else {
+		files = []string{path}
 	}
 
-	log.Printf("[DEMO] Timed out waiting for saga to finish")
+	count := 0
+	for _, f := range files {
+		raw, err := os.ReadFile(f)
+		if err != nil {
+			return count, err
+		}
+		trimmed := strings.TrimSpace(string(raw))
+		if strings.HasPrefix(trimmed, "[") {
+			var defs []flow.WorkflowDefinition
+			if err := json.Unmarshal(raw, &defs); err != nil {
+				return count, fmt.Errorf("%s: %w", f, err)
+			}
+			for _, d := range defs {
+				if err := srv.Coordinator.RegisterFlow(d); err != nil {
+					return count, fmt.Errorf("%s (%s): %w", f, d.Name, err)
+				}
+				count++
+			}
+		} else {
+			var def flow.WorkflowDefinition
+			if err := json.Unmarshal(raw, &def); err != nil {
+				return count, fmt.Errorf("%s: %w", f, err)
+			}
+			if err := srv.Coordinator.RegisterFlow(def); err != nil {
+				return count, fmt.Errorf("%s (%s): %w", f, def.Name, err)
+			}
+			count++
+		}
+	}
+	return count, nil
+}
+
+func splitCSV(s string) []string {
+	if strings.TrimSpace(s) == "" {
+		return nil
+	}
+	parts := strings.Split(s, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+func envOr(key, fallback string) string {
+	if v := strings.TrimSpace(os.Getenv(key)); v != "" {
+		return v
+	}
+	return fallback
+}
+
+func envBool(key string, fallback bool) bool {
+	if v := strings.TrimSpace(os.Getenv(key)); v != "" {
+		if b, err := strconv.ParseBool(v); err == nil {
+			return b
+		}
+	}
+	return fallback
+}
+
+func envInt(key string, fallback int) int {
+	if v := strings.TrimSpace(os.Getenv(key)); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			return n
+		}
+	}
+	return fallback
+}
+
+func envDuration(key string, fallback time.Duration) time.Duration {
+	if v := strings.TrimSpace(os.Getenv(key)); v != "" {
+		if d, err := time.ParseDuration(v); err == nil {
+			return d
+		}
+	}
+	return fallback
 }

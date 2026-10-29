@@ -1,0 +1,226 @@
+// Command ordersaga demonstrates an E-Commerce Order Fulfillment Saga on plexus-flow:
+//
+//	reserve-inventory ──► charge-card ──► ship-item
+//	release-inventory ◄── refund-card ◄── cancel-shipment  (automatic LIFO rollback on failure)
+//
+// Run happy path:
+//
+//	go run ./examples/ordersaga
+//
+// Run simulated failure & automatic LIFO Saga compensation:
+//
+//	go run ./examples/ordersaga --simulate-failure --fail-step ship-item
+//
+// Run with interactive Flow & Trace Dashboard on http://127.0.0.1:8080:
+//
+//	go run ./examples/ordersaga --simulate-failure --fail-step ship-item --serve
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"flag"
+	"fmt"
+	"log"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
+
+	"github.com/avivklas/plexus-flow/pkg/api"
+	"github.com/avivklas/plexus-flow/pkg/flow"
+	"github.com/avivklas/plexus-flow/pkg/flowstore"
+	"github.com/avivklas/plexus-flow/pkg/graphflow"
+	"github.com/avivklas/plexus-flow/pkg/worker"
+)
+
+const (
+	colorReset  = "\033[0m"
+	colorRed    = "\033[31m"
+	colorGreen  = "\033[32m"
+	colorYellow = "\033[33m"
+	colorBlue   = "\033[34m"
+	colorPurple = "\033[35m"
+	colorCyan   = "\033[36m"
+	colorBold   = "\033[1m"
+)
+
+func main() {
+	var (
+		simulateFailure = flag.Bool("simulate-failure", false, "Simulate a step failure to demonstrate automatic Saga rollback")
+		failStep        = flag.String("fail-step", "charge-card", "Which step to fail when simulating: 'charge-card' or 'ship-item'")
+		httpAddr        = flag.String("http-addr", "", "Optional HTTP listen address for the Flow & Trace Dashboard (e.g. 127.0.0.1:8080)")
+		serve           = flag.Bool("serve", false, "Keep the HTTP Flow & Trace Dashboard running after the demo completes (defaults to 127.0.0.1:8080)")
+	)
+	flag.Parse()
+
+	if *serve && *httpAddr == "" {
+		*httpAddr = "127.0.0.1:8080"
+	}
+
+	registry := worker.NewRegistry()
+	registerOrderSagaActivities(registry, *simulateFailure, *failStep)
+
+	coord, err := graphflow.NewEmbeddedCoordinator(registry)
+	if err != nil {
+		log.Fatalf("failed to start embedded coordinator: %v", err)
+	}
+	defer coord.Close()
+
+	if err := coord.RegisterFlow(orderSagaDefinition()); err != nil {
+		log.Fatalf("failed to register flow: %v", err)
+	}
+
+	var apiSrv *api.Server
+	if *httpAddr != "" {
+		apiSrv = api.NewServer(*httpAddr, coord, "ordersaga-demo")
+		if err := apiSrv.Start(); err != nil {
+			log.Fatalf("failed to start HTTP dashboard on %s: %v", *httpAddr, err)
+		}
+		defer apiSrv.Close()
+		log.Printf("%s[Dashboard]%s Flow & Trace Dashboard listening at http://%s", colorCyan, colorReset, apiSrv.Addr())
+	}
+
+	executeExampleSaga(coord, *simulateFailure, *failStep)
+
+	if apiSrv != nil {
+		log.Printf("%s[Dashboard]%s Inspect the flow and live trace at http://%s (press Ctrl+C to exit)", colorCyan, colorReset, apiSrv.Addr())
+		sigCh := make(chan os.Signal, 1)
+		signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
+		<-sigCh
+	}
+}
+
+func registerOrderSagaActivities(r *worker.Registry, simFail bool, failStepName string) {
+	// Step 1: Reserve Inventory
+	r.Register("reserve-inventory", func(ctx context.Context, input json.RawMessage) (json.RawMessage, error) {
+		log.Printf("%s  [ACTIVITY] reserve-inventory -> RESERVING item ITEM-42 for Order...%s", colorBlue, colorReset)
+		time.Sleep(100 * time.Millisecond)
+		log.Printf("%s  [ACTIVITY] reserve-inventory -> SUCCESS: Inventory reserved!%s", colorGreen, colorReset)
+		return json.RawMessage(`{"reserved": true, "sku": "ITEM-42", "qty": 1}`), nil
+	})
+
+	// Compensation 1: Release Inventory
+	r.Register("release-inventory", func(ctx context.Context, input json.RawMessage) (json.RawMessage, error) {
+		log.Printf("%s  [COMPENSATION] release-inventory -> RELEASING item ITEM-42 back to stock...%s", colorPurple, colorReset)
+		time.Sleep(80 * time.Millisecond)
+		log.Printf("%s  [COMPENSATION] release-inventory -> SUCCESS: Inventory released back to stock!%s", colorGreen, colorReset)
+		return json.RawMessage(`{"released": true}`), nil
+	})
+
+	// Step 2: Charge Card
+	r.Register("charge-card", func(ctx context.Context, input json.RawMessage) (json.RawMessage, error) {
+		log.Printf("%s  [ACTIVITY] charge-card -> CHARGING credit card $149.99...%s", colorBlue, colorReset)
+		time.Sleep(120 * time.Millisecond)
+		if simFail && failStepName == "charge-card" {
+			log.Printf("%s  [ACTIVITY] charge-card -> ERROR: Card declined: insufficient funds!%s", colorRed, colorReset)
+			return nil, errors.New("card declined: insufficient funds")
+		}
+		log.Printf("%s  [ACTIVITY] charge-card -> SUCCESS: Card charged $149.99!%s", colorGreen, colorReset)
+		return json.RawMessage(`{"charged": true, "amount": 149.99, "tx_id": "TX-998877"}`), nil
+	})
+
+	// Compensation 2: Refund Card
+	r.Register("refund-card", func(ctx context.Context, input json.RawMessage) (json.RawMessage, error) {
+		log.Printf("%s  [COMPENSATION] refund-card -> REFUNDING $149.99 to credit card...%s", colorPurple, colorReset)
+		time.Sleep(80 * time.Millisecond)
+		log.Printf("%s  [COMPENSATION] refund-card -> SUCCESS: Full refund processed!%s", colorGreen, colorReset)
+		return json.RawMessage(`{"refunded": true}`), nil
+	})
+
+	// Step 3: Ship Item
+	r.Register("ship-item", func(ctx context.Context, input json.RawMessage) (json.RawMessage, error) {
+		log.Printf("%s  [ACTIVITY] ship-item -> CREATING shipping label with courier...%s", colorBlue, colorReset)
+		time.Sleep(100 * time.Millisecond)
+		if simFail && failStepName == "ship-item" {
+			log.Printf("%s  [ACTIVITY] ship-item -> ERROR: Shipping courier service unavailable!%s", colorRed, colorReset)
+			return nil, errors.New("shipping courier service unavailable")
+		}
+		log.Printf("%s  [ACTIVITY] ship-item -> SUCCESS: Package dispatched! Tracking: TRK-554433%s", colorGreen, colorReset)
+		return json.RawMessage(`{"shipped": true, "tracking": "TRK-554433"}`), nil
+	})
+
+	// Compensation 3: Cancel Shipment
+	r.Register("cancel-shipment", func(ctx context.Context, input json.RawMessage) (json.RawMessage, error) {
+		log.Printf("%s  [COMPENSATION] cancel-shipment -> VOIDING shipping label...%s", colorPurple, colorReset)
+		time.Sleep(60 * time.Millisecond)
+		log.Printf("%s  [COMPENSATION] cancel-shipment -> SUCCESS: Shipping label voided!%s", colorGreen, colorReset)
+		return json.RawMessage(`{"cancelled": true}`), nil
+	})
+}
+
+func orderSagaDefinition() flow.WorkflowDefinition {
+	return flow.WorkflowDefinition{
+		Name: "order-fulfillment-saga",
+		Steps: []flow.StepDefinition{
+			{Name: "reserve-inventory", Activity: "reserve-inventory", CompensatingAction: "release-inventory"},
+			{Name: "charge-card", Activity: "charge-card", CompensatingAction: "refund-card"},
+			{Name: "ship-item", Activity: "ship-item", CompensatingAction: "cancel-shipment"},
+		},
+	}
+}
+
+func executeExampleSaga(coord *graphflow.Coordinator, simFail bool, failStepName string) {
+	fmt.Println()
+	log.Printf("%s========================================================================%s", colorCyan, colorReset)
+	log.Printf("%s[DEMO] Starting Order Processing Saga Demonstration...%s", colorBold, colorReset)
+	if simFail {
+		log.Printf("%s[DEMO] Mode: SIMULATED FAILURE on step '%s' (Triggering Automatic Saga Compensation)%s", colorYellow, failStepName, colorReset)
+	} else {
+		log.Printf("%s[DEMO] Mode: HAPPY PATH (All steps succeed)%s", colorGreen, colorReset)
+	}
+	log.Printf("%s========================================================================%s", colorCyan, colorReset)
+
+	def := orderSagaDefinition()
+
+	orderID := fmt.Sprintf("ORD-%d", time.Now().Unix()%10000)
+	inputData := map[string]any{
+		"order_id": orderID,
+		"customer": "Alice Smith",
+		"item":     "MacBook Pro M4",
+		"price":    149.99,
+	}
+	inputBytes, _ := json.Marshal(inputData)
+
+	ctx := context.Background()
+	wf, err := coord.StartWorkflow(ctx, flowstore.StartWorkflowRequest{
+		WorkflowID: orderID,
+		Definition: def,
+		Input:      inputBytes,
+		Metadata: map[string]string{
+			"channel": "web",
+		},
+	})
+	if err != nil {
+		log.Printf("[DEMO] Error starting workflow: %v", err)
+		return
+	}
+
+	log.Printf("%s[DEMO] Workflow started: ID=%s RunID=%s%s", colorCyan, wf.WorkflowID, wf.RunID, colorReset)
+
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		inst, exists := coord.GetWorkflow(orderID)
+		if exists && inst.IsTerminal() {
+			fmt.Println()
+			log.Printf("%s========================================================================%s", colorCyan, colorReset)
+			switch inst.Status {
+			case flow.StatusCompleted:
+				log.Printf("%s[DEMO RESULT] SAGA FINISHED SUCCESSFULLY: Status = %s%s", colorGreen, inst.Status, colorReset)
+				log.Printf("%s[DEMO RESULT] All steps executed and committed via Raft Graph with EOS!%s", colorGreen, colorReset)
+			case flow.StatusCompensated:
+				log.Printf("%s[DEMO RESULT] SAGA ROLLED BACK SAFELY: Status = %s%s", colorPurple, inst.Status, colorReset)
+				log.Printf("%s[DEMO RESULT] Failed step triggered automatic reverse-order compensation!%s", colorPurple, colorReset)
+				log.Printf("%s[DEMO RESULT] No orphaned transactions. System returned to clean state.%s", colorPurple, colorReset)
+			default:
+				log.Printf("%s[DEMO RESULT] Status: %s (Error: %s)%s", colorRed, inst.Status, inst.Error, colorReset)
+			}
+			log.Printf("%s========================================================================%s\n", colorCyan, colorReset)
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	log.Printf("[DEMO] Timed out waiting for saga to finish")
+}

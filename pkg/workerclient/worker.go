@@ -17,6 +17,7 @@ import (
 	"log"
 	"os"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -35,6 +36,8 @@ type Options struct {
 	MaxConcurrency int
 	// Registry holds the activities; a new one is created when nil.
 	Registry *worker.Registry
+	// Addresses optionally lists multiple cluster gRPC addresses for automatic leader failover.
+	Addresses []string
 	// DialOptions replace the default (insecure transport).
 	DialOptions []grpc.DialOption
 	// ReconnectBackoff is the pause before reconnecting (default 500ms, growing to 5s).
@@ -106,27 +109,58 @@ func New(addr string, opt Options) *Worker {
 func (w *Worker) Registry() *worker.Registry { return w.opt.Registry }
 
 // Run connects and serves tasks until ctx is cancelled, reconnecting with
-// backoff when the connection drops. Tasks in flight when a connection drops
-// are redelivered by the server.
+// backoff when the connection drops and cycling across cluster addresses when
+// multiple nodes are configured. Tasks in flight when a connection drops are
+// redelivered by the server.
 func (w *Worker) Run(ctx context.Context) error {
-	conn, err := grpc.NewClient(w.addr, w.opt.DialOptions...)
-	if err != nil {
-		return err
+	addrs := w.targetAddresses()
+	if len(addrs) == 0 {
+		return errors.New("worker: at least one server address is required")
 	}
-	defer conn.Close()
-	client := workerpb.NewWorkerServiceClient(conn)
+
+	conns := make([]*grpc.ClientConn, len(addrs))
+	clients := make([]workerpb.WorkerServiceClient, len(addrs))
+	for i, a := range addrs {
+		conn, err := grpc.NewClient(a, w.opt.DialOptions...)
+		if err != nil {
+			for j := 0; j < i; j++ {
+				_ = conns[j].Close()
+			}
+			return err
+		}
+		conns[i] = conn
+		clients[i] = workerpb.NewWorkerServiceClient(conn)
+	}
+	defer func() {
+		for _, c := range conns {
+			_ = c.Close()
+		}
+	}()
 
 	backoff := w.opt.ReconnectBackoff
+	idx := 0
+	triedInCycle := 0
 	for ctx.Err() == nil {
+		client := clients[idx]
+		target := addrs[idx]
 		started := time.Now()
 		err := w.session(ctx, client)
 		if ctx.Err() != nil {
 			return nil
 		}
-		log.Printf("[Worker %s] disconnected: %v", w.opt.WorkerID, err)
-		if time.Since(started) > 10*time.Second {
+		if time.Since(started) > 2*time.Second {
 			backoff = w.opt.ReconnectBackoff
+			triedInCycle = 0
 		}
+
+		idx = (idx + 1) % len(clients)
+		triedInCycle++
+		if triedInCycle < len(clients) {
+			// Immediately try the next cluster node address before sleeping backoff.
+			continue
+		}
+		triedInCycle = 0
+		log.Printf("[Worker %s] disconnected from %s: %v", w.opt.WorkerID, target, err)
 		select {
 		case <-time.After(backoff):
 		case <-ctx.Done():
@@ -137,6 +171,24 @@ func (w *Worker) Run(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+func (w *Worker) targetAddresses() []string {
+	seen := map[string]bool{}
+	var out []string
+	add := func(raw string) {
+		for _, part := range strings.Split(raw, ",") {
+			if p := strings.TrimSpace(part); p != "" && !seen[p] {
+				seen[p] = true
+				out = append(out, p)
+			}
+		}
+	}
+	add(w.addr)
+	for _, a := range w.opt.Addresses {
+		add(a)
+	}
+	return out
 }
 
 func (w *Worker) activities() []string {
@@ -219,8 +271,8 @@ func (w *Worker) session(ctx context.Context, client workerpb.WorkerServiceClien
 					tcancel()
 				}()
 				res := w.execute(tctx, t, send)
-				if tctx.Err() != nil && sctx.Err() == nil {
-					return // cancelled by the server, which no longer wants the result
+				if tctx.Err() != nil {
+					return // cancelled by the server or worker shutting down
 				}
 				if err := send(&workerpb.WorkerMessage{Message: &workerpb.WorkerMessage_Result{Result: res}}); err != nil {
 					cancel()

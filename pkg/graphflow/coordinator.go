@@ -110,8 +110,18 @@ func NewCoordinator(cfg Config) (*Coordinator, error) {
 		dispatcher:    executor,
 	}
 	cfg.ActivityStore.SetListeners(
-		func(task worker.ActivityTask) { c.currentDispatcher().DispatchActivity(task) },
-		func(task worker.CompensationTask) { c.currentDispatcher().DispatchCompensation(task) },
+		func(task worker.ActivityTask) {
+			if !c.cfg.Upstream.IsLeader() {
+				return
+			}
+			c.currentDispatcher().DispatchActivity(task)
+		},
+		func(task worker.CompensationTask) {
+			if !c.cfg.Upstream.IsLeader() {
+				return
+			}
+			c.currentDispatcher().DispatchCompensation(task)
+		},
 	)
 
 	// Connect Upstream -> Downstream via Raft Graph Pipe
@@ -294,6 +304,7 @@ func (c *Coordinator) runTimers() {
 	defer close(c.timersDone)
 	ticker := time.NewTicker(c.cfg.TimerInterval)
 	defer ticker.Stop()
+	wasLeader := c.cfg.Upstream.IsLeader()
 	var ticks int
 	for {
 		select {
@@ -302,7 +313,14 @@ func (c *Coordinator) runTimers() {
 		case <-ticker.C:
 		}
 		if !c.cfg.Upstream.IsLeader() {
+			wasLeader = false
 			continue
+		}
+		if !wasLeader {
+			wasLeader = true
+			if c.currentDispatcher() == c.executor {
+				c.Recover()
+			}
 		}
 		ticks++
 		now := time.Now().UTC()
@@ -362,6 +380,70 @@ func (c *Coordinator) currentDispatcher() worker.Dispatcher {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.dispatcher
+}
+
+// Recover re-dispatches in-flight running or compensating activity steps from FlowStore
+// after a node restart or Raft leadership takeover.
+func (c *Coordinator) Recover() {
+	disp := c.currentDispatcher()
+	for _, wf := range c.flowStore.ListWorkflows() {
+		if wf == nil || wf.IsTerminal() {
+			continue
+		}
+		switch wf.Status {
+		case flow.StatusRunning:
+			for _, name := range wf.StepOrder {
+				step := wf.Steps[name]
+				if step == nil || !step.IsActivity() || step.Status != flow.StepStatusRunning {
+					continue
+				}
+				task := worker.ActivityTask{
+					WorkflowID:   wf.WorkflowID,
+					RunID:        wf.RunID,
+					StepName:     step.Name,
+					Activity:     step.Activity,
+					Input:        step.Input,
+					Timeout:      step.Timeout,
+					Retries:      step.MaxRetries,
+					RetryPolicy:  step.RetryPolicy,
+					Attempt:      max(step.Attempt-1, 0),
+					LastProgress: step.Progress,
+					Metadata:     wf.Metadata,
+				}
+				if len(step.DependsOn) > 0 {
+					task.DependencyOutputs = make(map[string]json.RawMessage, len(step.DependsOn))
+					for _, dep := range step.DependsOn {
+						if d := wf.Steps[dep]; d != nil {
+							task.DependencyOutputs[dep] = d.Output
+						}
+					}
+				}
+				disp.DispatchActivity(task)
+			}
+		case flow.StatusCompensating:
+			for _, name := range wf.StepOrder {
+				step := wf.Steps[name]
+				if step == nil || step.Status != flow.StepStatusCompensating {
+					continue
+				}
+				in := step.Output
+				if len(in) == 0 {
+					in = step.Input
+				}
+				disp.DispatchCompensation(worker.CompensationTask{
+					WorkflowID:  wf.WorkflowID,
+					RunID:       wf.RunID,
+					StepName:    step.Name,
+					Activity:    step.CompensatingAction,
+					Input:       in,
+					Timeout:     step.Timeout,
+					Retries:     step.MaxRetries,
+					RetryPolicy: step.RetryPolicy,
+					Attempt:     max(step.CompensationAttempt-1, 0),
+				})
+			}
+		}
+	}
 }
 
 // Upstream returns the workflow machine; results from workers are applied to it.
@@ -494,6 +576,12 @@ func (c *Coordinator) CompactWorkflows(ctx context.Context, req flowstore.Compac
 	}
 	if out, ok := res.(flowstore.CompactWorkflowsResponse); ok {
 		return out, nil
+	}
+	if b, err := json.Marshal(res); err == nil {
+		var out flowstore.CompactWorkflowsResponse
+		if json.Unmarshal(b, &out) == nil {
+			return out, nil
+		}
 	}
 	return flowstore.CompactWorkflowsResponse{}, nil
 }

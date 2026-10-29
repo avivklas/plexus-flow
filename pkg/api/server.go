@@ -55,6 +55,8 @@ func NewServer(addr string, coord *graphflow.Coordinator, nodeID string) *Server
 	mux.HandleFunc("/api/v1/flows", s.handleFlows)
 	mux.HandleFunc("/api/v1/flows/", s.handleFlowByName)
 	mux.HandleFunc("/api/v1/traces/", s.handleTrace)
+	mux.HandleFunc("/healthz", s.handleHealthz)
+	mux.HandleFunc("/readyz", s.handleReadyz)
 	mux.HandleFunc("/", s.handleDashboard)
 
 	s.httpServer = &http.Server{
@@ -445,6 +447,29 @@ func (s *Server) handleWorkflowByID(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, wf)
 }
 
+func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]any{
+		"status":  "ok",
+		"node_id": s.nodeID,
+	})
+}
+
+func (s *Server) handleReadyz(w http.ResponseWriter, r *http.Request) {
+	hasLeader := s.isLeader() || s.leaderHTTPAddr() != ""
+	if !hasLeader && s.coord != nil && s.coord.Upstream() != nil {
+		hasLeader = s.coord.Upstream().Leader() != nil
+	}
+	if !hasLeader {
+		writeJSONError(w, http.StatusServiceUnavailable, "no cluster leader elected")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"status":    "ready",
+		"node_id":   s.nodeID,
+		"is_leader": s.isLeader(),
+	})
+}
+
 func (s *Server) handleClusterStatus(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
@@ -459,6 +484,21 @@ func (s *Server) handleClusterStatus(w http.ResponseWriter, r *http.Request) {
 	leaderAddr := s.leaderHTTPAddr()
 	if leaderAddr == "" && leader {
 		leaderAddr = s.Addr()
+	}
+	if !leader && s.coord != nil && s.coord.Upstream() != nil {
+		if l := s.coord.Upstream().Leader(); l != nil {
+			if leaderAddr == "" {
+				leaderAddr = l.Address
+			}
+			if members, err := s.coord.Upstream().Members(); err == nil {
+				for _, m := range members {
+					if m.Address == l.Address {
+						leaderID = strings.TrimSuffix(m.ID, "-wf")
+						break
+					}
+				}
+			}
+		}
 	}
 
 	allWfs := s.coord.ListWorkflows()
