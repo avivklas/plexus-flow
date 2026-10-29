@@ -1,37 +1,33 @@
 <!DOCTYPE html>
-<html lang="en" class="dark">
+<html lang="en">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Plexus-Flow — Build Data-Pipeline-Heavy Platforms in Hours, Not Quarters</title>
-  <meta name="description" content="Raft-native workflow, DAG, and Saga orchestration engine in a single Go binary. Build complex data pipelines, ML release platforms, and distributed sagas with consensus-level exactly-once guarantees, stateful checkpointing, and time-travel step replay." />
+  <title>Plexus-Flow — Raft-Based Workflow, DAG, and Saga Engine</title>
+  <meta name="description" content="Plexus-Flow is a distributed workflow, DAG, and Saga orchestration engine in a single Go binary, built on Raft and BoltDB." />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css" />
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/json.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
   <style>
     :root {
       color-scheme: dark;
-      --bg-0: #06080f;
-      --bg-1: #0b0f1c;
-      --bg-2: #11182b;
-      --bg-3: #19223c;
-      --surface: rgba(17, 24, 43, 0.78);
-      --surface-strong: rgba(22, 31, 56, 0.94);
-      --border: rgba(148, 163, 184, 0.14);
-      --border-hi: rgba(99, 102, 241, 0.48);
-      --text-0: #f8fafc;
-      --text-1: #cbd5e1;
-      --text-2: #94a3b8;
-      --accent: #6366f1;
-      --accent-2: #22d3ee;
-      --accent-3: #a855f7;
-      --emerald: #10b981;
-      --amber: #f59e0b;
-      --rose: #f43f5e;
-      --radius-lg: 16px;
-      --radius-md: 12px;
-      --radius-sm: 8px;
-      --shadow-xl: 0 24px 64px -12px rgba(0, 0, 0, 0.65);
+      --bg: #0d1117;
+      --surface: #161b22;
+      --surface-alt: #090d11;
+      --border: #30363d;
+      --text: #e6edf3;
+      --text-muted: #8b949e;
+      --primary: #2f81f7;
+      --primary-hover: #1f6feb;
+      --green: #3fb950;
+      --amber: #d29922;
+      --red: #f85149;
     }
 
     * {
@@ -41,20 +37,11 @@
     }
 
     html {
-      scroll-behavior: smooth;
       font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
-      background-color: var(--bg-0);
-      color: var(--text-0);
+      background-color: var(--bg);
+      color: var(--text);
       line-height: 1.6;
-    }
-
-    body {
-      background:
-        radial-gradient(circle at 15% 5%, rgba(99, 102, 241, 0.16), transparent 36%),
-        radial-gradient(circle at 85% 12%, rgba(34, 211, 238, 0.13), transparent 34%),
-        radial-gradient(circle at 50% 48%, rgba(168, 85, 247, 0.08), transparent 45%),
-        var(--bg-0);
-      overflow-x: hidden;
+      font-size: 15px;
     }
 
     code, pre, .mono {
@@ -62,22 +49,23 @@
     }
 
     a {
-      color: inherit;
+      color: var(--primary);
       text-decoration: none;
     }
 
-    .container {
-      width: min(1240px, 100% - 3rem);
-      margin-inline: auto;
+    a:hover {
+      text-decoration: underline;
     }
 
-    /* Navbar */
+    .container {
+      max-width: 1120px;
+      margin: 0 auto;
+      padding: 0 1.5rem;
+    }
+
+    /* Flat Header */
     .navbar {
-      position: sticky;
-      top: 0;
-      z-index: 100;
-      backdrop-filter: blur(16px);
-      background: rgba(6, 8, 15, 0.82);
+      background: var(--surface);
       border-bottom: 1px solid var(--border);
     }
 
@@ -85,372 +73,267 @@
       display: flex;
       align-items: center;
       justify-content: space-between;
-      height: 70px;
-      gap: 1.5rem;
+      height: 56px;
+      gap: 1rem;
     }
 
     .brand {
+      font-weight: 700;
+      font-size: 1.05rem;
+      color: var(--text);
       display: flex;
       align-items: center;
-      gap: 0.75rem;
-      font-weight: 800;
-      font-size: 1.15rem;
-      letter-spacing: -0.02em;
+      gap: 0.6rem;
     }
 
-    .brand-icon {
-      width: 36px;
-      height: 36px;
-      border-radius: 10px;
-      background: linear-gradient(135deg, var(--accent), var(--accent-2));
-      display: grid;
-      place-items: center;
-      box-shadow: 0 0 24px rgba(99, 102, 241, 0.45);
+    .brand:hover {
+      text-decoration: none;
     }
 
-    .brand-badge {
-      font-size: 0.7rem;
-      font-weight: 600;
-      padding: 0.15rem 0.5rem;
-      border-radius: 999px;
-      background: rgba(16, 185, 129, 0.15);
-      color: #34d399;
-      border: 1px solid rgba(16, 185, 129, 0.35);
+    .version-tag {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.72rem;
+      font-weight: 500;
+      padding: 0.1rem 0.45rem;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      color: var(--text-muted);
     }
 
     .nav-links {
       display: flex;
       align-items: center;
-      gap: 1.65rem;
-      font-size: 0.92rem;
-      color: var(--text-1);
+      gap: 1.4rem;
+      font-size: 0.9rem;
+    }
+
+    .nav-links a {
+      color: var(--text-muted);
     }
 
     .nav-links a:hover {
-      color: #fff;
-    }
-
-    .nav-actions {
-      display: flex;
-      align-items: center;
-      gap: 0.75rem;
+      color: var(--text);
+      text-decoration: none;
     }
 
     .btn {
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      gap: 0.5rem;
-      font-weight: 600;
-      font-size: 0.92rem;
-      padding: 0.62rem 1.2rem;
-      border-radius: 10px;
-      border: 1px solid transparent;
+      font-weight: 500;
+      font-size: 0.88rem;
+      padding: 0.45rem 0.95rem;
+      border: 1px solid var(--border);
+      background: var(--surface);
+      color: var(--text);
       cursor: pointer;
-      transition: all 0.18s ease;
+    }
+
+    .btn:hover {
+      background: #21262d;
+      text-decoration: none;
     }
 
     .btn-primary {
-      background: linear-gradient(135deg, var(--accent), #4f46e5);
-      color: #fff;
-      box-shadow: 0 8px 25px -4px rgba(99, 102, 241, 0.55);
+      background: var(--primary);
+      border-color: var(--primary);
+      color: #ffffff;
     }
 
     .btn-primary:hover {
-      transform: translateY(-1px);
-      box-shadow: 0 12px 30px -4px rgba(99, 102, 241, 0.75);
-    }
-
-    .btn-secondary {
-      background: rgba(255, 255, 255, 0.04);
-      color: var(--text-0);
-      border-color: var(--border);
-    }
-
-    .btn-secondary:hover {
-      background: rgba(255, 255, 255, 0.08);
-      border-color: rgba(255, 255, 255, 0.28);
+      background: var(--primary-hover);
+      border-color: var(--primary-hover);
     }
 
     /* Hero */
     .hero {
-      padding: 5.5rem 0 4rem;
-      text-align: center;
-      position: relative;
-    }
-
-    .eyebrow {
-      display: inline-flex;
-      align-items: center;
-      gap: 0.55rem;
-      padding: 0.35rem 0.9rem;
-      border-radius: 999px;
-      background: rgba(99, 102, 241, 0.12);
-      border: 1px solid rgba(99, 102, 241, 0.35);
-      color: #a5b4fc;
-      font-size: 0.8rem;
-      font-weight: 600;
-      letter-spacing: 0.04em;
-      text-transform: uppercase;
-      margin-bottom: 1.5rem;
-    }
-
-    .eyebrow-dot {
-      width: 8px;
-      height: 8px;
-      border-radius: 50%;
-      background: var(--accent-2);
-      box-shadow: 0 0 10px var(--accent-2);
+      padding: 3.5rem 0 3rem;
+      border-bottom: 1px solid var(--border);
     }
 
     .hero h1 {
-      font-size: clamp(2.5rem, 5.2vw, 4.35rem);
-      font-weight: 800;
-      line-height: 1.08;
-      letter-spacing: -0.035em;
-      max-width: 980px;
-      margin: 0 auto 1.35rem;
+      font-size: 2.15rem;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      line-height: 1.25;
+      margin-bottom: 0.85rem;
+      max-width: 780px;
     }
 
-    .gradient-text {
-      background: linear-gradient(135deg, #fff 15%, #a5b4fc 55%, #22d3ee 95%);
-      -webkit-background-clip: text;
-      -webkit-text-fill-color: transparent;
+    .hero p {
+      color: var(--text-muted);
+      font-size: 1.05rem;
+      max-width: 760px;
+      margin-bottom: 1.5rem;
     }
 
-    .hero-sub {
-      font-size: clamp(1.08rem, 1.8vw, 1.26rem);
-      color: var(--text-1);
-      max-width: 820px;
-      margin: 0 auto 2.25rem;
-      font-weight: 400;
-    }
-
-    .hero-cta {
+    .hero-actions {
       display: flex;
       flex-wrap: wrap;
-      justify-content: center;
-      gap: 0.9rem;
-      margin-bottom: 2.25rem;
+      gap: 0.75rem;
+      margin-bottom: 1.75rem;
     }
 
-    .hero-cta .btn {
-      padding: 0.82rem 1.55rem;
-      font-size: 1rem;
-    }
-
-    .cli-pill {
-      display: inline-flex;
-      align-items: center;
-      gap: 0.85rem;
-      background: rgba(11, 15, 28, 0.9);
+    /* Code Blocks with Highlight.js */
+    .code-box {
       border: 1px solid var(--border);
-      padding: 0.65rem 1.1rem;
-      border-radius: 12px;
-      font-size: 0.86rem;
-      color: #e2e8f0;
-      max-width: 100%;
-      overflow-x: auto;
-      box-shadow: var(--shadow-xl);
+      background: var(--surface-alt);
+      margin-top: 0.75rem;
     }
 
-    .cli-pill .prompt {
-      color: var(--accent-2);
-      user-select: none;
+    .code-box-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0.4rem 0.85rem;
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      font-family: 'JetBrains Mono', monospace;
+    }
+
+    .code-box pre {
+      margin: 0;
+      padding: 0.9rem 1rem;
+      overflow-x: auto;
+      font-size: 0.82rem;
+      line-height: 1.55;
+      background: var(--surface-alt);
+    }
+
+    .code-box pre code.hljs {
+      padding: 0;
+      background: transparent;
     }
 
     .copy-btn {
-      background: rgba(99, 102, 241, 0.16);
-      color: #c7d2fe;
-      border: 1px solid rgba(99, 102, 241, 0.35);
-      border-radius: 6px;
-      padding: 0.25rem 0.6rem;
-      font-size: 0.75rem;
-      font-weight: 600;
+      background: var(--bg);
+      color: var(--text-muted);
+      border: 1px solid var(--border);
+      padding: 0.15rem 0.5rem;
+      font-size: 0.72rem;
       cursor: pointer;
-      transition: all 0.15s ease;
     }
 
     .copy-btn:hover {
-      background: rgba(99, 102, 241, 0.3);
-      color: #fff;
+      color: var(--text);
+      border-color: var(--text-muted);
     }
 
-    /* Metrics strip */
-    .metrics-strip {
+    /* Summary Strip */
+    .summary-grid {
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-      gap: 1rem;
-      margin-top: 3.5rem;
-      padding: 1.5rem;
-      background: var(--surface);
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 1px;
+      background: var(--border);
       border: 1px solid var(--border);
-      border-radius: var(--radius-lg);
-      backdrop-filter: blur(12px);
+      margin-top: 2rem;
     }
 
-    .metric-card {
-      text-align: left;
-      padding: 0.65rem 1rem;
-      border-left: 2px solid rgba(99, 102, 241, 0.45);
+    .summary-item {
+      background: var(--surface);
+      padding: 1rem 1.15rem;
     }
 
-    .metric-value {
-      font-size: 1.65rem;
-      font-weight: 800;
-      color: #fff;
-      letter-spacing: -0.02em;
-      display: flex;
-      align-items: baseline;
-      gap: 0.4rem;
-    }
-
-    .metric-value span {
-      font-size: 0.82rem;
+    .summary-title {
       font-weight: 600;
-      color: var(--accent-2);
+      font-size: 0.92rem;
+      margin-bottom: 0.25rem;
     }
 
-    .metric-label {
-      font-size: 0.84rem;
-      color: var(--text-2);
-      margin-top: 0.2rem;
+    .summary-desc {
+      font-size: 0.82rem;
+      color: var(--text-muted);
     }
 
-    /* Section Headers */
+    /* Sections */
     section {
-      padding: 5rem 0;
+      padding: 3.25rem 0;
+      border-bottom: 1px solid var(--border);
     }
 
-    .section-header {
-      text-align: center;
-      max-width: 780px;
-      margin: 0 auto 3.25rem;
+    .section-head {
+      margin-bottom: 1.75rem;
     }
 
-    .section-tag {
-      display: inline-block;
-      font-size: 0.76rem;
+    .section-head h2 {
+      font-size: 1.45rem;
       font-weight: 700;
-      text-transform: uppercase;
-      letter-spacing: 0.08em;
-      color: var(--accent-2);
-      margin-bottom: 0.6rem;
+      letter-spacing: -0.015em;
+      margin-bottom: 0.4rem;
     }
 
-    .section-header h2 {
-      font-size: clamp(1.85rem, 3.4vw, 2.75rem);
-      font-weight: 800;
-      letter-spacing: -0.025em;
-      line-height: 1.15;
-      margin-bottom: 0.9rem;
+    .section-head p {
+      color: var(--text-muted);
+      max-width: 760px;
     }
 
-    .section-header p {
-      color: var(--text-1);
-      font-size: 1.06rem;
+    /* Interactive Walkthrough */
+    .walkthrough-panel {
+      border: 1px solid var(--border);
+      background: var(--surface);
     }
 
-    /* Interactive Pipeline Playground */
-    .playground-shell {
-      background: var(--surface-strong);
-      border: 1px solid var(--border-hi);
-      border-radius: var(--radius-lg);
-      box-shadow: var(--shadow-xl);
-      overflow: hidden;
-    }
-
-    .playground-topbar {
+    .walkthrough-bar {
       display: flex;
       flex-wrap: wrap;
       align-items: center;
       justify-content: space-between;
-      gap: 1rem;
-      padding: 1rem 1.4rem;
-      background: rgba(6, 8, 15, 0.75);
+      gap: 0.75rem;
+      padding: 0.75rem 1rem;
       border-bottom: 1px solid var(--border);
+      background: var(--bg);
     }
 
-    .scenario-tabs {
+    .tab-group {
       display: flex;
       flex-wrap: wrap;
-      gap: 0.5rem;
+      gap: 0.4rem;
     }
 
-    .scenario-tab {
-      background: rgba(255, 255, 255, 0.04);
+    .tab-btn {
+      background: var(--surface);
       border: 1px solid var(--border);
-      color: var(--text-1);
-      padding: 0.5rem 0.95rem;
-      border-radius: 8px;
-      font-size: 0.84rem;
-      font-weight: 600;
+      color: var(--text-muted);
+      padding: 0.35rem 0.75rem;
+      font-size: 0.8rem;
+      font-weight: 500;
       cursor: pointer;
-      transition: all 0.15s ease;
     }
 
-    .scenario-tab.active {
-      background: rgba(99, 102, 241, 0.22);
-      border-color: var(--accent);
+    .tab-btn.active {
+      background: var(--primary);
+      border-color: var(--primary);
       color: #fff;
     }
 
-    .sim-controls {
+    .action-group {
       display: flex;
       flex-wrap: wrap;
-      gap: 0.5rem;
-    }
-
-    .sim-btn {
-      padding: 0.48rem 0.9rem;
-      border-radius: 8px;
-      font-size: 0.8rem;
-      font-weight: 600;
-      border: 1px solid var(--border);
-      cursor: pointer;
-      display: inline-flex;
-      align-items: center;
       gap: 0.4rem;
-      transition: all 0.15s ease;
     }
 
-    .sim-btn.run {
-      background: rgba(16, 185, 129, 0.18);
-      border-color: rgba(16, 185, 129, 0.45);
-      color: #34d399;
+    .action-btn {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 0.35rem 0.7rem;
+      font-size: 0.78rem;
+      cursor: pointer;
     }
 
-    .sim-btn.fail {
-      background: rgba(244, 63, 94, 0.16);
-      border-color: rgba(244, 63, 94, 0.42);
-      color: #fb7185;
+    .action-btn:hover {
+      background: #21262d;
     }
 
-    .sim-btn.replay {
-      background: rgba(34, 211, 238, 0.16);
-      border-color: rgba(34, 211, 238, 0.42);
-      color: #67e8f9;
-    }
-
-    .sim-btn.kill {
-      background: rgba(245, 158, 11, 0.16);
-      border-color: rgba(245, 158, 11, 0.42);
-      color: #fbbf24;
-    }
-
-    .sim-btn:hover {
-      filter: brightness(1.2);
-      transform: translateY(-1px);
-    }
-
-    .playground-body {
+    .walkthrough-grid {
       display: grid;
-      grid-template-columns: 1.2fr 1fr;
-      min-height: 460px;
+      grid-template-columns: 1fr 1.15fr;
     }
 
-    @media (max-width: 980px) {
-      .playground-body {
+    @media (max-width: 900px) {
+      .walkthrough-grid {
         grid-template-columns: 1fr;
       }
       .nav-links {
@@ -458,760 +341,602 @@
       }
     }
 
-    .dag-canvas {
-      padding: 1.6rem;
+    .dag-pane {
+      padding: 1.25rem;
       border-right: 1px solid var(--border);
       display: flex;
       flex-direction: column;
       justify-content: space-between;
-      background:
-        radial-gradient(circle at 50% 30%, rgba(99, 102, 241, 0.09), transparent 70%),
-        rgba(8, 12, 24, 0.65);
+      gap: 1rem;
     }
 
-    .cluster-bar {
+    .quorum-bar {
       display: flex;
       align-items: center;
       justify-content: space-between;
       flex-wrap: wrap;
-      gap: 0.65rem;
-      padding: 0.65rem 0.95rem;
-      background: rgba(15, 23, 42, 0.85);
-      border: 1px solid var(--border);
-      border-radius: 10px;
-      font-size: 0.78rem;
-      margin-bottom: 1.25rem;
-    }
-
-    .node-pills {
-      display: flex;
       gap: 0.5rem;
-      flex-wrap: wrap;
-    }
-
-    .node-pill {
-      padding: 0.22rem 0.6rem;
-      border-radius: 6px;
-      font-family: 'JetBrains Mono', monospace;
-      font-size: 0.73rem;
-      display: inline-flex;
-      align-items: center;
-      gap: 0.35rem;
-      background: rgba(255, 255, 255, 0.05);
+      padding: 0.5rem 0.75rem;
+      background: var(--bg);
       border: 1px solid var(--border);
+      font-size: 0.76rem;
     }
 
-    .node-pill.leader {
-      background: rgba(16, 185, 129, 0.14);
-      border-color: rgba(16, 185, 129, 0.45);
-      color: #6ee7b7;
+    .node-list {
+      display: flex;
+      gap: 0.4rem;
     }
 
-    .node-pill.dead {
-      background: rgba(244, 63, 94, 0.14);
-      border-color: rgba(244, 63, 94, 0.45);
-      color: #fda4af;
+    .node-tag {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.72rem;
+      padding: 0.12rem 0.45rem;
+      border: 1px solid var(--border);
+      background: var(--surface);
+      color: var(--text-muted);
+    }
+
+    .node-tag.leader {
+      border-color: var(--green);
+      color: var(--green);
+    }
+
+    .node-tag.offline {
+      border-color: var(--red);
+      color: var(--red);
       text-decoration: line-through;
     }
 
     .dag-stages {
       display: flex;
       flex-direction: column;
-      gap: 0.9rem;
-      margin: auto 0;
+      gap: 0.65rem;
     }
 
     .dag-row {
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(175px, 1fr));
-      gap: 0.75rem;
+      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+      gap: 0.65rem;
     }
 
-    .dag-node {
-      background: rgba(17, 24, 43, 0.92);
+    .step-box {
+      background: var(--bg);
       border: 1px solid var(--border);
-      border-radius: 10px;
-      padding: 0.8rem 0.95rem;
-      transition: all 0.25s ease;
-      position: relative;
+      padding: 0.65rem 0.8rem;
     }
 
-    .dag-node.RUNNING {
-      border-color: var(--accent-2);
-      box-shadow: 0 0 22px rgba(34, 211, 238, 0.22);
+    .step-box.RUNNING {
+      border-color: var(--primary);
     }
 
-    .dag-node.COMPLETED {
-      border-color: rgba(16, 185, 129, 0.6);
-      background: rgba(16, 185, 129, 0.07);
+    .step-box.COMPLETED {
+      border-color: var(--green);
     }
 
-    .dag-node.FAILED {
-      border-color: rgba(244, 63, 94, 0.75);
-      background: rgba(244, 63, 94, 0.1);
+    .step-box.FAILED {
+      border-color: var(--red);
     }
 
-    .dag-node.COMPENSATING, .dag-node.ROLLED_BACK {
-      border-color: rgba(245, 158, 11, 0.7);
-      background: rgba(245, 158, 11, 0.09);
+    .step-box.ROLLED_BACK {
+      border-color: var(--amber);
     }
 
-    .dag-node-header {
+    .step-top {
       display: flex;
-      align-items: center;
       justify-content: space-between;
-      gap: 0.4rem;
-      margin-bottom: 0.35rem;
-    }
-
-    .dag-node-title {
-      font-weight: 700;
-      font-size: 0.84rem;
-      color: #fff;
-    }
-
-    .dag-status {
-      font-family: 'JetBrains Mono', monospace;
-      font-size: 0.66rem;
-      font-weight: 600;
-      padding: 0.12rem 0.42rem;
-      border-radius: 4px;
-      background: rgba(255, 255, 255, 0.07);
-      color: var(--text-1);
-    }
-
-    .dag-node.COMPLETED .dag-status {
-      background: rgba(16, 185, 129, 0.2);
-      color: #6ee7b7;
-    }
-
-    .dag-node.RUNNING .dag-status {
-      background: rgba(34, 211, 238, 0.2);
-      color: #67e8f9;
-    }
-
-    .dag-node.FAILED .dag-status {
-      background: rgba(244, 63, 94, 0.25);
-      color: #fda4af;
-    }
-
-    .dag-node.ROLLED_BACK .dag-status {
-      background: rgba(245, 158, 11, 0.25);
-      color: #fde68a;
-    }
-
-    .dag-node-meta {
-      font-size: 0.74rem;
-      color: var(--text-2);
-      font-family: 'JetBrains Mono', monospace;
-    }
-
-    .progress-track {
-      height: 5px;
-      background: rgba(255, 255, 255, 0.08);
-      border-radius: 999px;
-      overflow: hidden;
-      margin-top: 0.5rem;
-    }
-
-    .progress-fill {
-      height: 100%;
-      background: linear-gradient(90deg, var(--accent), var(--accent-2));
-      transition: width 0.25s ease;
-    }
-
-    .sim-log {
-      margin-top: 1.25rem;
-      padding: 0.75rem 0.95rem;
-      background: rgba(6, 8, 15, 0.9);
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      font-family: 'JetBrains Mono', monospace;
-      font-size: 0.76rem;
-      color: #93c5fd;
-      min-height: 54px;
-      display: flex;
       align-items: center;
+      gap: 0.4rem;
+      margin-bottom: 0.25rem;
+    }
+
+    .step-name {
+      font-weight: 600;
+      font-size: 0.8rem;
+    }
+
+    .step-state {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.68rem;
+      color: var(--text-muted);
+    }
+
+    .step-box.COMPLETED .step-state { color: var(--green); }
+    .step-box.RUNNING .step-state { color: var(--primary); }
+    .step-box.FAILED .step-state { color: var(--red); }
+    .step-box.ROLLED_BACK .step-state { color: var(--amber); }
+
+    .step-meta {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.72rem;
+      color: var(--text-muted);
+    }
+
+    .progress-bar {
+      height: 3px;
+      background: var(--surface);
+      margin-top: 0.45rem;
+    }
+
+    .progress-val {
+      height: 100%;
+      background: var(--primary);
+    }
+
+    .step-box.COMPLETED .progress-val {
+      background: var(--green);
+    }
+
+    .status-line {
+      padding: 0.55rem 0.75rem;
+      background: var(--surface-alt);
+      border: 1px solid var(--border);
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.75rem;
+      color: var(--text-muted);
     }
 
     .code-pane {
+      background: var(--surface-alt);
       display: flex;
       flex-direction: column;
-      background: rgba(6, 8, 15, 0.92);
     }
 
-    .code-tabs {
+    .code-lang-bar {
       display: flex;
+      background: var(--surface);
       border-bottom: 1px solid var(--border);
-      padding: 0 1rem;
-      gap: 0.5rem;
-      background: rgba(11, 15, 28, 0.8);
     }
 
-    .code-tab {
-      padding: 0.7rem 0.9rem;
-      font-size: 0.8rem;
-      font-weight: 600;
-      color: var(--text-2);
-      background: none;
+    .lang-btn {
+      background: transparent;
       border: none;
-      border-bottom: 2px solid transparent;
+      border-right: 1px solid var(--border);
+      color: var(--text-muted);
+      padding: 0.5rem 0.9rem;
+      font-size: 0.78rem;
+      font-family: 'JetBrains Mono', monospace;
       cursor: pointer;
     }
 
-    .code-tab.active {
-      color: #fff;
-      border-bottom-color: var(--accent-2);
+    .lang-btn.active {
+      background: var(--surface-alt);
+      color: var(--text);
+      font-weight: 600;
     }
 
-    .code-content {
-      padding: 1.25rem;
+    .code-pane pre {
+      padding: 1rem;
       overflow-x: auto;
       font-size: 0.8rem;
-      line-height: 1.65;
-      color: #e2e8f0;
+      line-height: 1.55;
+      margin: 0;
       flex: 1;
     }
 
-    /* Feature Grid: Data Platform Superpowers */
-    .feature-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
-      gap: 1.35rem;
+    .code-pane pre code.hljs {
+      padding: 0;
+      background: transparent;
     }
 
-    .feature-card {
+    /* Capabilities Grid */
+    .cap-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(330px, 1fr));
+      gap: 1rem;
+    }
+
+    .cap-card {
       background: var(--surface);
       border: 1px solid var(--border);
-      border-radius: var(--radius-lg);
-      padding: 1.75rem;
-      transition: all 0.2s ease;
+      padding: 1.25rem;
       display: flex;
       flex-direction: column;
-      gap: 0.8rem;
+      justify-content: space-between;
     }
 
-    .feature-card:hover {
-      border-color: var(--border-hi);
-      transform: translateY(-3px);
-      box-shadow: var(--shadow-xl);
+    .cap-card h3 {
+      font-size: 1rem;
+      font-weight: 600;
+      margin-bottom: 0.45rem;
     }
 
-    .feature-icon {
-      width: 42px;
-      height: 42px;
-      border-radius: 10px;
-      background: rgba(99, 102, 241, 0.14);
-      border: 1px solid rgba(99, 102, 241, 0.35);
-      display: grid;
-      place-items: center;
-      font-size: 1.2rem;
+    .cap-card p {
+      font-size: 0.88rem;
+      color: var(--text-muted);
+      margin-bottom: 0.85rem;
     }
 
-    .feature-card h3 {
-      font-size: 1.18rem;
-      font-weight: 700;
-      letter-spacing: -0.01em;
-    }
-
-    .feature-card p {
-      font-size: 0.92rem;
-      color: var(--text-1);
-    }
-
-    .mini-code {
-      margin-top: auto;
-      background: rgba(6, 8, 15, 0.88);
+    /* Table */
+    .table-container {
       border: 1px solid var(--border);
-      border-radius: 8px;
-      padding: 0.75rem 0.9rem;
-      font-size: 0.75rem;
-      color: #a5f3fc;
       overflow-x: auto;
     }
 
-    /* Comparison Table */
-    .table-wrap {
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: var(--radius-lg);
-      overflow-x: auto;
-      box-shadow: var(--shadow-xl);
-    }
-
-    table.compare-table {
+    table {
       width: 100%;
       border-collapse: collapse;
+      font-size: 0.86rem;
       text-align: left;
-      font-size: 0.9rem;
     }
 
-    .compare-table th, .compare-table td {
-      padding: 1.05rem 1.25rem;
+    th, td {
+      padding: 0.75rem 1rem;
       border-bottom: 1px solid var(--border);
+      background: var(--surface);
     }
 
-    .compare-table th {
-      background: rgba(6, 8, 15, 0.75);
-      font-weight: 700;
-      color: var(--text-0);
-    }
-
-    .compare-table th.highlight, .compare-table td.highlight {
-      background: rgba(99, 102, 241, 0.1);
-      border-left: 1px solid rgba(99, 102, 241, 0.35);
-      border-right: 1px solid rgba(99, 102, 241, 0.35);
-    }
-
-    .badge-yes {
-      color: #34d399;
+    th {
+      background: var(--bg);
       font-weight: 600;
+      color: var(--text);
     }
 
-    .badge-warn {
-      color: #fbbf24;
+    td {
+      color: var(--text-muted);
     }
 
-    .badge-no {
-      color: #94a3b8;
+    td strong {
+      color: var(--text);
     }
 
-    /* Battle Tests Section */
-    .battle-grid {
+    /* Verification Grid */
+    .test-grid {
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
-      gap: 1.2rem;
+      grid-template-columns: repeat(auto-fit, minmax(330px, 1fr));
+      gap: 1rem;
     }
 
-    .battle-card {
-      background: linear-gradient(180deg, rgba(17, 24, 43, 0.9), rgba(11, 15, 28, 0.95));
+    .test-card {
+      background: var(--surface);
       border: 1px solid var(--border);
-      border-radius: var(--radius-md);
-      padding: 1.45rem;
-      position: relative;
+      padding: 1.1rem 1.25rem;
     }
 
-    .battle-pass {
-      display: inline-flex;
-      align-items: center;
-      gap: 0.35rem;
+    .test-name {
       font-family: 'JetBrains Mono', monospace;
-      font-size: 0.72rem;
-      font-weight: 600;
-      padding: 0.2rem 0.55rem;
-      border-radius: 6px;
-      background: rgba(16, 185, 129, 0.15);
-      color: #34d399;
-      border: 1px solid rgba(16, 185, 129, 0.35);
-      margin-bottom: 0.75rem;
+      font-size: 0.8rem;
+      color: var(--green);
+      margin-bottom: 0.4rem;
+      word-break: break-all;
     }
 
-    .battle-card h4 {
-      font-family: 'JetBrains Mono', monospace;
-      font-size: 0.88rem;
-      color: #fff;
-      margin-bottom: 0.5rem;
-      word-break: break-word;
+    .test-card p {
+      font-size: 0.86rem;
+      color: var(--text-muted);
     }
 
-    .battle-card p {
-      font-size: 0.88rem;
-      color: var(--text-1);
-    }
-
-    /* Dashboard Showcase */
-    .showcase-grid {
+    /* Screenshots */
+    .ui-grid {
       display: grid;
       grid-template-columns: 1fr 1fr;
-      gap: 1.5rem;
+      gap: 1rem;
     }
 
-    @media (max-width: 900px) {
-      .showcase-grid {
+    @media (max-width: 850px) {
+      .ui-grid {
         grid-template-columns: 1fr;
       }
     }
 
-    .showcase-card {
-      background: var(--surface);
+    .ui-card {
       border: 1px solid var(--border);
-      border-radius: var(--radius-lg);
-      overflow: hidden;
-      box-shadow: var(--shadow-xl);
+      background: var(--surface);
     }
 
-    .showcase-card img {
+    .ui-card img {
       width: 100%;
       display: block;
       border-bottom: 1px solid var(--border);
     }
 
-    .showcase-caption {
-      padding: 1.25rem 1.5rem;
+    .ui-caption {
+      padding: 0.9rem 1.1rem;
     }
 
-    .showcase-caption h3 {
-      font-size: 1.1rem;
-      margin-bottom: 0.35rem;
+    .ui-caption h3 {
+      font-size: 0.95rem;
+      margin-bottom: 0.25rem;
     }
 
-    .showcase-caption p {
-      font-size: 0.88rem;
-      color: var(--text-1);
+    .ui-caption p {
+      font-size: 0.84rem;
+      color: var(--text-muted);
     }
 
-    /* Docs Preview Cards */
-    .docs-hub-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-      gap: 1rem;
-    }
-
-    .doc-link-card {
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: var(--radius-md);
-      padding: 1.35rem;
-      transition: all 0.18s ease;
-      display: block;
-    }
-
-    .doc-link-card:hover {
-      border-color: var(--accent-2);
-      transform: translateY(-2px);
-    }
-
-    .doc-link-card h4 {
-      font-size: 1.02rem;
-      margin-bottom: 0.4rem;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-    }
-
-    .doc-link-card p {
-      font-size: 0.85rem;
-      color: var(--text-2);
-    }
-
-    /* Footer */
     footer {
-      border-top: 1px solid var(--border);
-      padding: 3.5rem 0;
-      margin-top: 3rem;
-      color: var(--text-2);
-      font-size: 0.88rem;
+      padding: 2.25rem 0;
+      color: var(--text-muted);
+      font-size: 0.84rem;
     }
 
     .footer-inner {
       display: flex;
-      flex-wrap: wrap;
       justify-content: space-between;
-      align-items: center;
-      gap: 1.5rem;
+      flex-wrap: wrap;
+      gap: 1rem;
     }
   </style>
 </head>
 <body>
 
-  <!-- Top Navigation -->
   <header class="navbar">
     <div class="container nav-inner">
       <a href="index.html" class="brand">
-        <div class="brand-icon">⚡</div>
-        <span>Plexus-Flow</span>
-        <span class="brand-badge">Production Ready</span>
+        <span>plexus-flow</span>
+        <span class="version-tag">v1.0</span>
       </a>
       <nav class="nav-links">
-        <a href="#playground">Live Simulator</a>
-        <a href="#data-pipelines">Data Platform Features</a>
-        <a href="#architecture">1 Binary vs 7 Services</a>
-        <a href="#fault-tolerance">Battle-Tested Proof</a>
-        <a href="#observability">Visual UI</a>
-        <a href="docs.html" style="color: #67e8f9; font-weight: 600;">Documentation ↗</a>
+        <a href="#walkthrough">Pipeline Walkthrough</a>
+        <a href="#capabilities">Data Pipeline Primitives</a>
+        <a href="#architecture">Architecture</a>
+        <a href="#verification">Fault Tolerance</a>
+        <a href="#ui">Dashboard</a>
+        <a href="docs.html">Documentation</a>
       </nav>
-      <div class="nav-actions">
-        <a href="docs.html" class="btn btn-secondary">Read Docs</a>
-        <a href="https://github.com/avivklas/plexus-flow" class="btn btn-primary" target="_blank" rel="noopener">GitHub ★</a>
+      <div>
+        <a href="docs.html" class="btn">Docs</a>
+        <a href="https://github.com/avivklas/plexus-flow" class="btn btn-primary" target="_blank" rel="noopener">GitHub</a>
       </div>
     </div>
   </header>
 
-  <!-- Hero Section -->
   <section class="hero">
     <div class="container">
-      <div class="eyebrow">
-        <span class="eyebrow-dot"></span>
-        Raft-Native Workflow, DAG &amp; Saga Engine • Single Go Binary
-      </div>
-      <h1>
-        Build <span class="gradient-text">Data-Pipeline-Heavy Platforms</span> in Hours. Not Quarters.
-      </h1>
-      <p class="hero-sub">
-        Stop stitching together Temporal, Kafka, Cassandra, Elasticsearch, and Redis just to orchestrate reliable pipelines.
-        <strong>Plexus-Flow</strong> delivers consensus-level <strong>Exactly-Once DAGs</strong>, stateful <strong>progress checkpointing</strong>,
-        <strong>time-travel step replay</strong>, automatic <strong>Saga compensation</strong>, and sub-millisecond search in one zero-dependency binary.
+      <h1>Declarative data pipelines, DAGs, and Sagas in a single binary.</h1>
+      <p>
+        <code>plexus-flow</code> is a workflow orchestration engine built on HashiCorp Raft and BoltDB.
+        It lets you define multi-stage data pipelines, fan-out/fan-in DAGs, and compensating Sagas in JSON,
+        and execute steps with standard Go or Python workers—without managing external databases, message queues, or replay determinism rules.
       </p>
 
-      <div class="hero-cta">
-        <a href="docs.html#quickstart" class="btn btn-primary">Launch Your First Pipeline in 60s →</a>
-        <a href="#playground" class="btn btn-secondary">Try Interactive Pipeline Simulator</a>
-        <a href="docs.html" class="btn btn-secondary">Full Documentation &amp; SDKs</a>
+      <div class="hero-actions">
+        <a href="docs.html#quickstart" class="btn btn-primary">Quick Start Guide</a>
+        <a href="docs.html" class="btn">Read Documentation</a>
+        <a href="#walkthrough" class="btn">Explore Examples</a>
       </div>
 
-      <div class="cli-pill mono">
-        <span class="prompt">$</span>
-        <span id="hero-cmd">go run ./cmd/plexus-flow --id node-1 --http-addr :8080 --grpc-addr :9090 --data-dir ./data</span>
-        <button class="copy-btn" onclick="copyText('hero-cmd', this)">Copy</button>
+      <div class="code-box">
+        <div class="code-box-header">
+          <span>bash — Start a single-node server</span>
+          <button class="copy-btn" onclick="copyCode(this)">Copy</button>
+        </div>
+        <pre><code class="language-bash">go run ./cmd/plexus-flow \
+  --id node-1 \
+  --http-addr :8080 \
+  --grpc-addr :9090 \
+  --data-dir ./data</code></pre>
       </div>
 
-      <div class="metrics-strip">
-        <div class="metric-card">
-          <div class="metric-value">1 Binary <span>vs. 7+ services</span></div>
-          <div class="metric-label">Embedded Raft, BoltDB, Inverted Search, gRPC Broker &amp; Web UI</div>
+      <div class="summary-grid">
+        <div class="summary-item">
+          <div class="summary-title">Self-Contained Binary</div>
+          <div class="summary-desc">Embeds Raft consensus, BoltDB storage, gRPC worker broker, inverted search index, and web UI.</div>
         </div>
-        <div class="metric-card">
-          <div class="metric-value">0% <span>Determinism Tax</span></div>
-          <div class="metric-label">Write normal Python &amp; Go workers—no replay panics or sandbox rules</div>
+        <div class="summary-item">
+          <div class="summary-title">No Determinism Constraints</div>
+          <div class="summary-desc">State transitions are tracked in the Raft FSM; workers run ordinary Go and Python functions.</div>
         </div>
-        <div class="metric-card">
-          <div class="metric-value">100% EOS <span>Raft Graph</span></div>
-          <div class="metric-label">Deterministic <code>UpstreamID:Term:Index:Seq</code> idempotency keys</div>
+        <div class="summary-item">
+          <div class="summary-title">Stateful Checkpointing</div>
+          <div class="summary-desc">Long-running batch steps report progress via heartbeats and resume from <code>LastProgress</code> on failover.</div>
         </div>
-        <div class="metric-card">
-          <div class="metric-value">&lt; 1 ms <span>Zero-CDC Search</span></div>
-          <div class="metric-label">In-memory roaring-style inverted index updated inside the Raft FSM</div>
-        </div>
-        <div class="metric-card">
-          <div class="metric-value">~300 ms <span>Quorum Failover</span></div>
-          <div class="metric-label">Workers auto-failover and resume from replicated <code>LastProgress</code></div>
+        <div class="summary-item">
+          <div class="summary-title">Targeted Step Replay</div>
+          <div class="summary-desc">Re-run a failed downstream transformation step via <code>/replay</code> while keeping upstream outputs intact.</div>
         </div>
       </div>
     </div>
   </section>
 
-  <!-- Interactive Pipeline Simulator -->
-  <section id="playground">
+  <!-- Interactive Walkthrough -->
+  <section id="walkthrough">
     <div class="container">
-      <div class="section-header">
-        <span class="section-tag">Interactive Playground</span>
-        <h2>See How Effortless Complex Data Platforms Become</h2>
+      <div class="section-head">
+        <h2>Interactive Pipeline Walkthrough</h2>
         <p>
-          Select a real-world data pipeline architecture below, run it live, inject mid-flight step failures,
-          trigger <strong>Time-Travel Replay</strong> without re-ingesting upstream data, or kill the Raft leader mid-batch.
+          Inspect how <code>plexus-flow</code> executes parallel data pipelines, handles step failures with targeted replay or LIFO Saga compensation, and recovers in-flight progress when a Raft leader fails.
         </p>
       </div>
 
-      <div class="playground-shell">
-        <div class="playground-topbar">
-          <div class="scenario-tabs">
-            <button class="scenario-tab active" onclick="selectScenario('etl', this)">1. Lakehouse ETL &amp; Vector Backfill</button>
-            <button class="scenario-tab" onclick="selectScenario('ml', this)">2. ML Fine-Tune &amp; Human Gate</button>
-            <button class="scenario-tab" onclick="selectScenario('saga', this)">3. Cross-Service Financial Saga</button>
+      <div class="walkthrough-panel">
+        <div class="walkthrough-bar">
+          <div class="tab-group">
+            <button class="tab-btn active" onclick="selectScenario('etl', this)">1. Batch ETL &amp; Vector Indexing</button>
+            <button class="tab-btn" onclick="selectScenario('ml', this)">2. Model Evaluation &amp; Approval Gate</button>
+            <button class="tab-btn" onclick="selectScenario('saga', this)">3. Order Fulfillment Saga</button>
           </div>
-          <div class="sim-controls">
-            <button class="sim-btn run" onclick="runSimulation()">▶ Run Pipeline</button>
-            <button class="sim-btn fail" onclick="simulateFailure()">⚡ Inject Failure</button>
-            <button class="sim-btn replay" onclick="simulateReplay()">⏪ Time-Travel /replay</button>
-            <button class="sim-btn kill" onclick="simulateLeaderKill()">💥 Kill Raft Leader</button>
+          <div class="action-group">
+            <button class="action-btn" onclick="runSimulation()">Run Pipeline</button>
+            <button class="action-btn" onclick="simulateFailure()">Simulate Failure</button>
+            <button class="action-btn" onclick="simulateReplay()">Replay Step (/replay)</button>
+            <button class="action-btn" onclick="simulateLeaderKill()">Simulate Leader Failover</button>
           </div>
         </div>
 
-        <div class="playground-body">
-          <!-- Left: Live DAG + Raft Cluster Visualizer -->
-          <div class="dag-canvas">
-            <div class="cluster-bar">
-              <span><strong>3-Node Dual-Raft Quorum</strong> (<code>workflow-raft</code> + <code>activity-raft</code>)</span>
-              <div class="node-pills" id="cluster-nodes">
-                <span class="node-pill leader" id="pill-n1">● node-1 (LEADER)</span>
-                <span class="node-pill" id="pill-n2">● node-2 (VOTER)</span>
-                <span class="node-pill" id="pill-n3">● node-3 (VOTER)</span>
+        <div class="walkthrough-grid">
+          <div class="dag-pane">
+            <div class="quorum-bar">
+              <span>Raft Cluster (3 Voters)</span>
+              <div class="node-list">
+                <span class="node-tag leader" id="pill-n1">node-1 (leader)</span>
+                <span class="node-tag" id="pill-n2">node-2 (voter)</span>
+                <span class="node-tag" id="pill-n3">node-3 (voter)</span>
               </div>
             </div>
 
             <div class="dag-stages" id="dag-stages"></div>
 
-            <div class="sim-log" id="sim-log">
-              [Ready] Click "▶ Run Pipeline", "⚡ Inject Failure", or "💥 Kill Raft Leader" to inspect Raft FSM behavior.
+            <div class="status-line" id="sim-log">
+              Select an action above to step through the workflow state machine.
             </div>
           </div>
 
-          <!-- Right: Code Inspector -->
           <div class="code-pane">
-            <div class="code-tabs">
-              <button class="code-tab active" onclick="switchCodeTab('python', this)">Python Worker SDK</button>
-              <button class="code-tab" onclick="switchCodeTab('go', this)">Go Typed Worker</button>
-              <button class="code-tab" onclick="switchCodeTab('json', this)">Declarative DAG JSON</button>
+            <div class="code-lang-bar">
+              <button class="lang-btn active" onclick="switchCodeTab('python', this)">worker.py</button>
+              <button class="lang-btn" onclick="switchCodeTab('go', this)">worker.go</button>
+              <button class="lang-btn" onclick="switchCodeTab('json', this)">workflow.json</button>
             </div>
-            <pre class="code-content"><code id="playground-code"></code></pre>
+            <pre><code id="playground-code" class="language-python"></code></pre>
           </div>
         </div>
       </div>
     </div>
   </section>
 
-  <!-- 6 Data Platform Superpowers -->
-  <section id="data-pipelines">
+  <!-- Core Capabilities for Data Pipelines -->
+  <section id="capabilities">
     <div class="container">
-      <div class="section-header">
-        <span class="section-tag">Built for Data-Intensive Engineering</span>
-        <h2>Why Data &amp; AI Platform Teams Replace 6 Months of Plumbing with Plexus-Flow</h2>
+      <div class="section-head">
+        <h2>Primitives for Data-Intensive Platforms</h2>
         <p>
-          Traditional orchestrators force you to choose between brittle cron scripts or heavyweight replay engines.
-          Plexus-Flow gives data engineers primitives purpose-built for high-volume batch, streaming, and ML workloads.
+          Developing data pipelines often requires gluing together separate systems for scheduling, batch checkpointing, retries, and metadata search. <code>plexus-flow</code> provides these primitives directly in the state machine.
         </p>
       </div>
 
-      <div class="feature-grid">
-        <div class="feature-card">
-          <div class="feature-icon">📊</div>
-          <h3>Stateful Progress Checkpointing</h3>
-          <p>
-            Ingesting 50M Parquet rows or fine-tuning an LLM across 20 epochs? Stream cursor offsets via
-            <code>HeartbeatWithProgress</code>. Every checkpoint replicates through Raft so if a worker or leader dies at 94%, the replacement worker resumes at 94% via <code>LastProgress</code>.
-          </p>
-          <pre class="mini-code"><code>resume = ctx.last_progress or {"offset": 0}
-for batch in read_parquet(start=resume["offset"]):
+      <div class="cap-grid">
+        <div class="cap-card">
+          <div>
+            <h3>1. Progress Checkpointing</h3>
+            <p>
+              Workers processing large datasets can attach JSON progress payloads to periodic heartbeats. Checkpoints are replicated via Raft (`LastProgress`), allowing a replacement worker to resume from the last committed offset after a crash.
+            </p>
+          </div>
+          <div class="code-box">
+            <div class="code-box-header"><span>python</span><button class="copy-btn" onclick="copyCode(this)">Copy</button></div>
+            <pre><code class="language-python">state = ctx.last_progress or {"offset": 0}
+for batch in read_batches(start=state["offset"]):
     process(batch)
-    ctx.heartbeat_progress({"offset": batch.end})</code></pre>
+    ctx.heartbeat_progress({"offset": batch.next_offset})</code></pre>
+          </div>
         </div>
 
-        <div class="feature-card">
-          <div class="feature-icon">⏪</div>
-          <h3>Time-Travel Step Replay (<code>/replay</code>)</h3>
-          <p>
-            When step 5 of an expensive data pipeline fails due to a downstream schema change, don't re-run 4 hours of upstream extraction.
-            Deploy your fix and call <code>/replay</code> on step 5—upstream step outputs stay intact while downstream steps cleanly re-execute.
-          </p>
-          <pre class="mini-code"><code>curl -X POST http://localhost:8080/api/v1/workflows/etl-99/replay \
-  -d '{"step": "transform-features"}'</code></pre>
+        <div class="cap-card">
+          <div>
+            <h3>2. Targeted Step Replay</h3>
+            <p>
+              If a downstream step fails due to a bug or schema mismatch, you can deploy a fix and call <code>/replay</code> on that specific step. Upstream steps remain <code>COMPLETED</code> while the target step and its dependents are reset to <code>PENDING</code>.
+            </p>
+          </div>
+          <div class="code-box">
+            <div class="code-box-header"><span>bash</span><button class="copy-btn" onclick="copyCode(this)">Copy</button></div>
+            <pre><code class="language-bash">curl -X POST http://localhost:8080/api/v1/workflows/etl-42/replay \
+  -H "Content-Type: application/json" \
+  -d '{"step": "build-vector-index"}'</code></pre>
+          </div>
         </div>
 
-        <div class="feature-card">
-          <div class="feature-icon">⚡</div>
-          <h3>Zero Determinism Tax (Standard Python &amp; Go)</h3>
-          <p>
-            Forget <code>workflow.Now()</code>, <code>workflow.SideEffect()</code>, and dreaded <code>NonDeterministicError</code> crashes.
-            Plexus-Flow evaluates workflow DAGs inside the Raft state machine—your workers are 100% standard Python or Go functions using Pandas, PyArrow, DuckDB, or PyTorch.
-          </p>
-          <pre class="mini-code"><code>@worker.activity("embed-chunks")
-def embed(ctx: ActivityContext, data: dict) -> dict:
-    # Call GPUs, UUIDs, clocks, or S3 freely!
-    return {"vectors": model.encode(data["uri"])}</code></pre>
+        <div class="cap-card">
+          <div>
+            <h3>3. Standard Worker Code</h3>
+            <p>
+              Because orchestration state is stored explicitly in the Raft FSM rather than reconstructed by re-running workflow code, worker activities have no determinism restrictions and can use any standard library or native driver.
+            </p>
+          </div>
+          <div class="code-box">
+            <div class="code-box-header"><span>go</span><button class="copy-btn" onclick="copyCode(this)">Copy</button></div>
+            <pre><code class="language-go">worker.RegisterTyped(reg, "embed-chunks",
+    func(ctx context.Context, in EmbedReq) (EmbedRes, error) {
+        return runEmbeddingModel(ctx, in.DatasetURI)
+    })</code></pre>
+          </div>
         </div>
 
-        <div class="feature-card">
-          <div class="feature-icon">🔀</div>
-          <h3>Fork-Join DAGs &amp; Conditional Branching</h3>
-          <p>
-            Fan out across parallel feature-extraction branches with <code>depends_on</code>, dynamically skip branches using declarative <code>when</code> predicates on upstream step JSON outputs, pause on durable <code>sleep</code> timers, or block on human approval signals.
-          </p>
-          <pre class="mini-code"><code>"when": {
-  "source": "quality-audit",
-  "field": "metrics.f1_score",
-  "op": "gte",
-  "value": 0.95
+        <div class="cap-card">
+          <div>
+            <h3>4. Fork-Join DAGs &amp; Conditions</h3>
+            <p>
+              Steps declare upstream dependencies with <code>depends_on</code> for parallel fan-out and join synchronization. Optional <code>when</code> predicates inspect workflow inputs, metadata, or upstream outputs to skip unneeded branches.
+            </p>
+          </div>
+          <div class="code-box">
+            <div class="code-box-header"><span>json</span><button class="copy-btn" onclick="copyCode(this)">Copy</button></div>
+            <pre><code class="language-json">{
+  "name": "publish-table",
+  "activity": "iceberg.commit",
+  "depends_on": ["validate-schema", "redact-pii"],
+  "when": {
+    "source": "validate-schema",
+    "field": "valid",
+    "op": "eq",
+    "value": true
+  }
 }</code></pre>
+          </div>
         </div>
 
-        <div class="feature-card">
-          <div class="feature-icon">🛡️</div>
-          <h3>Automatic LIFO Saga Compensation</h3>
-          <p>
-            Provisioning cloud GPUs, staging Snowflake tables, and charging customer credits across microservices?
-            Attach a <code>compensating_action</code> to any step. On downstream failure, Plexus-Flow automatically rolls back completed steps in reverse topological order.
-          </p>
-          <pre class="mini-code"><code>{
-  "name": "allocate-gpu-cluster",
-  "activity": "gpu.provision",
-  "compensating_action": "gpu.teardown"
+        <div class="cap-card">
+          <div>
+            <h3>5. LIFO Saga Compensation</h3>
+            <p>
+              When a workflow spans external resources that lack two-phase commit, each step can specify a <code>compensating_action</code>. On terminal step failure, completed steps are compensated in reverse topological order.
+            </p>
+          </div>
+          <div class="code-box">
+            <div class="code-box-header"><span>json</span><button class="copy-btn" onclick="copyCode(this)">Copy</button></div>
+            <pre><code class="language-json">{
+  "name": "reserve-inventory",
+  "activity": "inventory.reserve",
+  "compensating_action": "inventory.release"
 }</code></pre>
+          </div>
         </div>
 
-        <div class="feature-card">
-          <div class="feature-icon">🔍</div>
-          <h3>Sub-Millisecond Zero-CDC Faceted Search</h3>
-          <p>
-            Tag workflows with arbitrary <code>metadata</code> (<code>tenant</code>, <code>pipeline</code>, <code>dataset_date</code>, <code>env</code>).
-            Query millions of executions in under a millisecond via the embedded inverted index—no Elasticsearch cluster or Kafka CDC pipeline required.
-          </p>
-          <pre class="mini-code"><code>GET /api/v1/workflows?status=RUNNING&amp;meta.tenant=acme&amp;meta.tier=gpu</code></pre>
+        <div class="cap-card">
+          <div>
+            <h3>6. In-Memory Faceted Search</h3>
+            <p>
+              Workflows can be tagged with key-value <code>metadata</code>. An embedded inverted index is updated synchronously as Raft log entries apply, supporting filtered queries without external search infrastructure.
+            </p>
+          </div>
+          <div class="code-box">
+            <div class="code-box-header"><span>bash</span><button class="copy-btn" onclick="copyCode(this)">Copy</button></div>
+            <pre><code class="language-bash">curl "http://localhost:8080/api/v1/workflows?status=RUNNING&amp;meta.tenant=acme"</code></pre>
+          </div>
         </div>
       </div>
     </div>
   </section>
 
-  <!-- 1 Binary vs 7 Services Comparison -->
+  <!-- Architecture & Trade-offs -->
   <section id="architecture">
     <div class="container">
-      <div class="section-header">
-        <span class="section-tag">Radical Operational Simplicity</span>
-        <h2>1 Self-Contained Binary vs. 7 Infrastructure Services</h2>
+      <div class="section-head">
+        <h2>Architecture &amp; Design Trade-Offs</h2>
         <p>
-          Deploy an embedded single-node binary on your laptop or scale out to a sharded, multi-node Raft cluster in production with zero external dependencies.
+          <code>plexus-flow</code> pairs an upstream workflow state machine (<code>FlowStore</code>) with a downstream task lease queue (<code>ActivityStore</code>) over a deterministic Raft Graph pipe.
         </p>
       </div>
 
-      <div class="table-wrap">
-        <table class="compare-table">
+      <div class="table-container">
+        <table>
           <thead>
             <tr>
-              <th>Capability</th>
-              <th class="highlight">⚡ Plexus-Flow</th>
-              <th>Replay Orchestrators (Temporal)</th>
-              <th>Batch Schedulers (Airflow / Prefect)</th>
-              <th>DIY Queue + DB (Kafka + Postgres)</th>
+              <th>Aspect</th>
+              <th>Plexus-Flow Approach</th>
+              <th>Operational Trade-Off</th>
             </tr>
           </thead>
           <tbody>
             <tr>
-              <td><strong>External Dependencies</strong></td>
-              <td class="highlight"><span class="badge-yes">✓ Zero (Single 25 MB Binary)</span></td>
-              <td><span class="badge-warn">Cassandra/Postgres + Elasticsearch + 4 Services</span></td>
-              <td><span class="badge-warn">Postgres + Redis/Celery + Scheduler + Webserver</span></td>
-              <td><span class="badge-warn">Kafka + Postgres + Redis Locks + Custom Workers</span></td>
+              <td><strong>Deployment Footprint</strong></td>
+              <td>Single Go binary with embedded Raft &amp; BoltDB</td>
+              <td>No external database or broker to operate; requires local disk for Raft logs and snapshots.</td>
             </tr>
             <tr>
-              <td><strong>Determinism Constraints</strong></td>
-              <td class="highlight"><span class="badge-yes">✓ None (FSM-Driven DAGs)</span></td>
-              <td><span class="badge-no">Strict Replay Determinism Rules</span></td>
-              <td><span class="badge-yes">None</span></td>
-              <td><span class="badge-yes">None</span></td>
+              <td><strong>Workflow Model</strong></td>
+              <td>Declarative JSON DAGs + stateless Go/Python workers</td>
+              <td>Simple to reason about and free of replay determinism bugs, though less flexible than arbitrary Turing-complete workflow code.</td>
             </tr>
             <tr>
-              <td><strong>Exactly-Once Execution (EOS)</strong></td>
-              <td class="highlight"><span class="badge-yes">✓ Consensus-Level Raft Graph + Lease Fencing</span></td>
-              <td><span class="badge-yes">History Service State Machine</span></td>
-              <td><span class="badge-no">At-Least-Once (Manual Idempotency)</span></td>
-              <td><span class="badge-no">Manual Outbox + Dedup Tables</span></td>
+              <td><strong>Dispatch Guarantees</strong></td>
+              <td>Deterministic Raft Graph key (<code>UpstreamID:Term:Index:Seq</code>) + lease attempts</td>
+              <td>Prevents duplicate task creation across leader failovers; external side effects should still use the provided task key or checkpoint token for idempotency.</td>
             </tr>
             <tr>
-              <td><strong>Sub-Second Latency + Massive ETL</strong></td>
-              <td class="highlight"><span class="badge-yes">✓ Both (&lt;5ms Dispatch + Progress Checkpoints)</span></td>
-              <td><span class="badge-yes">Yes (Requires Heartbeat Boilerplate)</span></td>
-              <td><span class="badge-no">High Scheduling Overhead (Seconds)</span></td>
-              <td><span class="badge-warn">Fast Queue, No Native DAG/Checkpoint State</span></td>
-            </tr>
-            <tr>
-              <td><strong>Time-Travel Step Replay (<code>/replay</code>)</strong></td>
-              <td class="highlight"><span class="badge-yes">✓ Native 1-Click API &amp; SDK Call</span></td>
-              <td><span class="badge-warn">Complex Event-ID Workflow Reset</span></td>
-              <td><span class="badge-yes">Clear Task &amp; Downstream</span></td>
-              <td><span class="badge-no">Manual SQL State Hacking</span></td>
-            </tr>
-            <tr>
-              <td><strong>Automatic LIFO Saga Rollbacks</strong></td>
-              <td class="highlight"><span class="badge-yes">✓ Declarative <code>compensating_action</code></span></td>
-              <td><span class="badge-warn">Manual <code>defer</code> Compensation Code</span></td>
-              <td><span class="badge-no">Not Native</span></td>
-              <td><span class="badge-no">Hand-Rolled State Machine</span></td>
-            </tr>
-            <tr>
-              <td><strong>Multi-Attribute Faceted Search</strong></td>
-              <td class="highlight"><span class="badge-yes">✓ Built-In Zero-CDC Inverted Index (&lt;1ms)</span></td>
-              <td><span class="badge-warn">Requires External Elasticsearch / OpenSearch</span></td>
-              <td><span class="badge-no">Basic SQL Filtering</span></td>
-              <td><span class="badge-no">DIY Secondary Indexes</span></td>
+              <td><strong>State Storage</strong></td>
+              <td>Active workflows in memory (backed by BoltDB); terminal workflows compacted to cold archive</td>
+              <td>Provides sub-millisecond reads and search for active runs, bounded by configuring <code>--retention-ttl</code> and <code>--max-completed-workflows</code>.</td>
             </tr>
           </tbody>
         </table>
@@ -1219,162 +944,90 @@ def embed(ctx: ActivityContext, data: dict) -> dict:
     </div>
   </section>
 
-  <!-- Fault Tolerance & Battle Tests Proof -->
-  <section id="fault-tolerance">
+  <!-- Fault-Tolerance Verification -->
+  <section id="verification">
     <div class="container">
-      <div class="section-header">
-        <span class="section-tag">Mathematically &amp; Empirically Verified</span>
-        <h2>Battle-Tested for Split-Brains, Leader Kills &amp; Concurrency Storms</h2>
+      <div class="section-head">
+        <h2>Cluster &amp; Concurrency Verification</h2>
         <p>
-          We don't just claim fault tolerance—we prove it continuously with automated multi-node Raft chaos and race-detector battle suites in <a href="https://github.com/avivklas/plexus-flow/blob/main/test/battletest_test.go" style="color:#67e8f9; text-decoration:underline;"><code>test/battletest_test.go</code></a>.
+          The repository includes automated multi-node Raft failover, worker disconnect, and race-detector test suites in <a href="https://github.com/avivklas/plexus-flow/blob/main/test/battletest_test.go"><code>test/battletest_test.go</code></a>.
         </p>
       </div>
 
-      <div class="battle-grid">
-        <div class="battle-card">
-          <div class="battle-pass">✓ PASS • 3-Node Raft Quorum</div>
-          <h4>TestBattle_ThreeNodeCluster_QuorumAndFollowerMutations</h4>
-          <p>
-            Boots a 3-node Dual-Raft cluster (`node-1`, `node-2`, `node-3`). Submits definitions, workflow starts, and signals to <strong>follower HTTP endpoints</strong>, verifying transparent leader forwarding and survival when a node is killed.
-          </p>
+      <div class="test-grid">
+        <div class="test-card">
+          <div class="test-name">TestBattle_ThreeNodeCluster_QuorumAndFollowerMutations</div>
+          <p>Verifies 3-node cluster formation, follower-to-leader HTTP/gRPC command forwarding, and continued operation after a node shutdown.</p>
         </div>
-
-        <div class="battle-card">
-          <div class="battle-pass">✓ PASS • Checkpoint Failover</div>
-          <h4>TestBattle_ThreeNodeCluster_LeaderKillMidFlightAndCheckpointFailover</h4>
-          <p>
-            Streams `HeartbeatWithProgress` (`batch: 2`) from a remote gRPC worker, <strong>hard-kills the Raft leader mid-step</strong>, elects a new leader across surviving voters, fails over the worker, and proves execution resumes from `batch: 2`.
-          </p>
+        <div class="test-card">
+          <div class="test-name">TestBattle_ThreeNodeCluster_LeaderKillMidFlightAndCheckpointFailover</div>
+          <p>Kills the Raft leader while a remote worker is streaming progress checkpoints and verifies the new leader resumes the task from <code>LastProgress</code>.</p>
         </div>
-
-        <div class="battle-card">
-          <div class="battle-pass">✓ PASS • Saga Rollback Recovery</div>
-          <h4>TestBattle_ThreeNodeCluster_LeaderCrashDuringSagaCompensation</h4>
-          <p>
-            Triggers a multi-step failure, pauses inside a running LIFO `CompensatingAction`, <strong>crashes the cluster leader mid-rollback</strong>, and verifies the new leader completes the remaining Saga compensations with zero duplicate rollbacks.
-          </p>
+        <div class="test-card">
+          <div class="test-name">TestBattle_ThreeNodeCluster_LeaderCrashDuringSagaCompensation</div>
+          <p>Stops the leader mid-rollback and confirms the surviving quorum finishes the remaining LIFO compensation steps.</p>
         </div>
-
-        <div class="battle-card">
-          <div class="battle-pass">✓ PASS • Zombie Lease Fencing</div>
-          <h4>TestBattle_WorkerChaos_MassDisconnectsAndZombieFencing</h4>
-          <p>
-            Runs 25 concurrent 3-stage pipelines across 6 workers, <strong>abruptly kills 50% of workers mid-flight</strong>, and injects delayed zombie completions (`Attempt 1` arriving after `Attempt 2` succeeded)—proving 100% monotonic lease fencing.
-          </p>
+        <div class="test-card">
+          <div class="test-name">TestBattle_WorkerChaos_MassDisconnectsAndZombieFencing</div>
+          <p>Disconnects half of the worker pool during execution and injects delayed completions from superseded attempts to verify lease fencing.</p>
         </div>
-
-        <div class="battle-card">
-          <div class="battle-pass">✓ PASS • 4-Shard Concurrency Storm</div>
-          <h4>TestBattle_HighConcurrency_ParallelDAGAndSagaStorm</h4>
-          <p>
-            Hammers a 4-shard `ShardedCoordinator` with <strong>80 concurrent Fork-Join DAGs &amp; compensating Sagas</strong> while firing parallel `SearchWorkflows` queries and live SSE watchers under `go test -race` with zero data races.
-          </p>
+        <div class="test-card">
+          <div class="test-name">TestBattle_HighConcurrency_ParallelDAGAndSagaStorm</div>
+          <p>Executes 80 concurrent branching workflows and Sagas across a 4-shard <code>ShardedCoordinator</code> with concurrent search and SSE subscribers under <code>-race</code>.</p>
         </div>
-
-        <div class="battle-card">
-          <div class="battle-pass">✓ PASS • BoltDB Crash &amp; Snapshot EOS</div>
-          <h4>TestBattle_Deduplication_IdempotencyUnderReplayAndSnapshotRestore</h4>
-          <p>
-            Fires duplicate `(UpstreamID, Term, Index, Seq)` Raft Graph mutations, takes an FSM snapshot, <strong>restarts from BoltDB on disk</strong>, and verifies every duplicate delivery is absorbed as an idempotent no-op.
-          </p>
+        <div class="test-card">
+          <div class="test-name">TestBattle_Deduplication_IdempotencyUnderReplayAndSnapshotRestore</div>
+          <p>Verifies that duplicate <code>(UpstreamID, Term, Index, Seq)</code> task emissions are ignored across FSM snapshot restores and BoltDB restarts.</p>
         </div>
       </div>
 
-      <div style="text-align:center; margin-top: 2.25rem;">
-        <div class="cli-pill mono">
-          <span class="prompt">$</span>
-          <span id="battle-cmd">go test -v -race -run TestBattle ./test</span>
-          <button class="copy-btn" onclick="copyText('battle-cmd', this)">Copy</button>
+      <div class="code-box" style="margin-top: 1.25rem;">
+        <div class="code-box-header">
+          <span>bash — Run the cluster and concurrency test suite</span>
+          <button class="copy-btn" onclick="copyCode(this)">Copy</button>
         </div>
+        <pre><code class="language-bash">go test -v -race -run TestBattle ./test</code></pre>
       </div>
     </div>
   </section>
 
-  <!-- Built-in Observability Showcase -->
-  <section id="observability">
+  <!-- Web Interface -->
+  <section id="ui">
     <div class="container">
-      <div class="section-header">
-        <span class="section-tag">Zero-Config Visual Command Center</span>
-        <h2>Real-Time DAG Topology &amp; Gantt Trace Waterfall—Built Right Into the Binary</h2>
+      <div class="section-head">
+        <h2>Embedded Web Dashboard</h2>
         <p>
-          Open <code>http://localhost:8080</code> on any node to inspect live workflow graphs, step inputs/outputs, progress checkpoints, retry attempts, and millisecond execution timelines.
+          Every node serves a web interface on its HTTP port for inspecting workflow topologies, step payloads, and execution timelines over Server-Sent Events.
         </p>
       </div>
 
-      <div class="showcase-grid">
-        <div class="showcase-card">
-          <img src="images/dashboard_flow.png" alt="Plexus-Flow Interactive DAG Flow Graph View" loading="lazy" />
-          <div class="showcase-caption">
-            <h3>Interactive DAG &amp; Saga Flow Visualizer</h3>
-            <p>
-              Watch steps transition through <code>PENDING</code>, <code>RUNNING</code>, <code>COMPLETED</code>, <code>SKIPPED</code>, or <code>ROLLED_BACK</code> in real time over Server-Sent Events, with full JSON payload inspection per step.
-            </p>
+      <div class="ui-grid">
+        <div class="ui-card">
+          <img src="images/dashboard_flow.png" alt="Workflow DAG topology view" loading="lazy" />
+          <div class="ui-caption">
+            <h3>Flow Topology View</h3>
+            <p>Displays step dependencies, conditional branches, compensating actions, and current execution status.</p>
           </div>
         </div>
-
-        <div class="showcase-card">
-          <img src="images/dashboard_traces.png" alt="Plexus-Flow Execution Trace Waterfall View" loading="lazy" />
-          <div class="showcase-caption">
-            <h3>Gantt Execution Waterfall &amp; Latency Inspector</h3>
-            <p>
-              Pinpoint bottlenecks across parallel Fork-Join branches, inspect retry backoffs and compensation durations, and trigger new workflow runs or time-travel replays directly from the browser.
-            </p>
+        <div class="ui-card">
+          <img src="images/dashboard_traces.png" alt="Execution trace timeline view" loading="lazy" />
+          <div class="ui-caption">
+            <h3>Execution Trace &amp; Step Inspector</h3>
+            <p>Shows per-step timing, retry counts, JSON inputs/outputs, and error messages in real time.</p>
           </div>
         </div>
-      </div>
-    </div>
-  </section>
-
-  <!-- Documentation Hub Preview -->
-  <section id="docs-preview">
-    <div class="container">
-      <div class="section-header">
-        <span class="section-tag">Comprehensive Documentation</span>
-        <h2>Everything You Need to Go from Local Prototype to Multi-Node Production</h2>
-        <p>
-          Explore our complete engineering documentation covering declarative DAG syntax, Go &amp; Python SDKs, REST/SSE APIs, and 3-node Raft cluster operations.
-        </p>
-      </div>
-
-      <div class="docs-hub-grid">
-        <a href="docs.html#quickstart" class="doc-link-card">
-          <h4>🚀 60-Second Quick Start <span>→</span></h4>
-          <p>Boot the production server binary, run the Order Saga &amp; ML Release examples, and explore the live Web UI.</p>
-        </a>
-        <a href="docs.html#concepts" class="doc-link-card">
-          <h4>🧩 DAGs, Sagas &amp; Conditions <span>→</span></h4>
-          <p>Master Fork-Join parallelism, <code>when</code> predicates, LIFO Saga compensation, durable timers, and cron schedules.</p>
-        </a>
-        <a href="docs.html#data-pipelines" class="doc-link-card">
-          <h4>📊 Data Pipeline Patterns <span>→</span></h4>
-          <p>Implement stateful progress checkpointing (<code>LastProgress</code>), Time-Travel Step Replay (<code>/replay</code>), and selective retries.</p>
-        </a>
-        <a href="docs.html#go-sdk" class="doc-link-card">
-          <h4>🐹 Go SDK &amp; Embedded Engine <span>→</span></h4>
-          <p>Use generics-based <code>RegisterTyped[In, Out]</code>, <code>ShardedCoordinator</code>, and multi-node <code>workerclient</code> failover.</p>
-        </a>
-        <a href="docs.html#python-sdk" class="doc-link-card">
-          <h4>🐍 Python Worker &amp; Client SDK <span>→</span></h4>
-          <p>Build polyglot data/ML workers with <code>@worker.activity</code>, heartbeats, SSE <code>watch()</code>, and <code>WorkflowClient</code>.</p>
-        </a>
-        <a href="docs.html#clustering" class="doc-link-card">
-          <h4>🌐 Production Raft Clustering <span>→</span></h4>
-          <p>Deploy 3- or 5-node fault-tolerant clusters, configure CLI flags &amp; env vars, health probes, and cold storage archival.</p>
-        </a>
       </div>
     </div>
   </section>
 
   <footer>
     <div class="container footer-inner">
-      <div>
-        <strong>⚡ Plexus-Flow</strong> — Distributed Raft-Native Workflow, DAG &amp; Saga Orchestration Engine.
-      </div>
-      <div style="display:flex; gap:1.5rem;">
+      <div>plexus-flow — MIT License</div>
+      <div style="display:flex; gap:1.25rem;">
         <a href="docs.html">Documentation</a>
-        <a href="docs.html#api-reference">REST &amp; SSE API</a>
-        <a href="docs.html#clustering">Cluster Operations</a>
-        <a href="https://github.com/avivklas/plexus-flow" target="_blank" rel="noopener">GitHub</a>
+        <a href="docs.html#api-reference">HTTP API</a>
+        <a href="docs.html#clustering">Cluster Setup</a>
+        <a href="https://github.com/avivklas/plexus-flow" target="_blank" rel="noopener">GitHub Repository</a>
       </div>
     </div>
   </footer>
@@ -1383,30 +1036,29 @@ def embed(ctx: ActivityContext, data: dict) -> dict:
     const SCENARIOS = {
       etl: {
         nodes: [
-          [{ id: "ingest", title: "1. ingest-parquet-shards", meta: "10M rows • HeartbeatWithProgress", progress: 100, status: "COMPLETED" }],
+          [{ id: "ingest", title: "1. ingest-parquet", meta: "HeartbeatWithProgress", progress: 100, status: "COMPLETED" }],
           [
-            { id: "validate", title: "2a. schema-validate", meta: "depends_on: [ingest]", progress: 100, status: "COMPLETED" },
-            { id: "pii", title: "2b. redact-pii-columns", meta: "depends_on: [ingest]", progress: 100, status: "COMPLETED" },
-            { id: "embed", title: "2c. gpu-vector-embed", meta: "depends_on: [ingest]", progress: 100, status: "COMPLETED" }
+            { id: "validate", title: "2a. validate-schema", meta: "depends_on: [ingest]", progress: 100, status: "COMPLETED" },
+            { id: "pii", title: "2b. redact-pii", meta: "depends_on: [ingest]", progress: 100, status: "COMPLETED" },
+            { id: "embed", title: "2c. build-vector-index", meta: "depends_on: [ingest]", progress: 100, status: "COMPLETED" }
           ],
-          [{ id: "commit", title: "3. iceberg-snapshot-commit", meta: "join: [2a, 2b, 2c] • when: valid==true", progress: 100, status: "COMPLETED" }]
+          [{ id: "commit", title: "3. commit-snapshot", meta: "join: [2a, 2b, 2c]", progress: 100, status: "COMPLETED" }]
         ],
-        python: `from plexus_flow import Worker, ActivityContext, WorkflowClient
+        python: `from plexus_flow import Worker, ActivityContext
 
 worker = Worker("localhost:9090", worker_id="etl-worker-1", concurrency=8)
 
-@worker.activity("ingest-parquet-shards")
-def ingest_shards(ctx: ActivityContext, payload: dict) -> dict:
-    # Resume seamlessly from last Raft-replicated checkpoint on spot/leader failover!
+@worker.activity("ingest-parquet")
+def ingest_parquet(ctx: ActivityContext, payload: dict) -> dict:
     resume = ctx.last_progress or {"shard": 0, "rows": 0}
     for shard in range(resume["shard"], payload["total_shards"]):
-        rows = process_parquet_shard(payload["bucket"], shard)
+        rows = process_shard(payload["uri"], shard)
         ctx.heartbeat_progress({"shard": shard + 1, "rows": resume["rows"] + rows})
-    return {"ingested_rows": 10_000_000, "valid": True}
+    return {"rows": 1_000_000, "valid": True}
 
-@worker.activity("gpu-vector-embed")
-def embed_vectors(ctx: ActivityContext, payload: dict) -> dict:
-    return {"index_uri": "s3://lakehouse/embeddings/v42.parquet"}
+@worker.activity("build-vector-index")
+def build_index(ctx: ActivityContext, payload: dict) -> dict:
+    return {"index_uri": "s3://lakehouse/index.parquet"}
 
 worker.run()`,
         go: `package main
@@ -1417,109 +1069,108 @@ import (
     "github.com/avivklas/plexus-flow/pkg/workerclient"
 )
 
-type IngestReq struct { Bucket string \`json:"bucket"\` }
-type IngestRes struct { Rows   int    \`json:"ingested_rows"\` }
+type IngestReq struct { URI string \`json:"uri"\` }
+type IngestRes struct { Rows int   \`json:"rows"\` }
 
 func main() {
     reg := worker.NewRegistry()
-    worker.RegisterTyped(reg, "ingest-parquet-shards",
+    worker.RegisterTyped(reg, "ingest-parquet",
         func(ctx context.Context, req IngestReq) (IngestRes, error) {
-            last := worker.LastProgressFromContext(ctx) // Resume from checkpoint!
+            last := worker.LastProgressFromContext(ctx)
+            _ = last
             report := worker.ProgressFromContext(ctx)
-            _ = report([]byte(\`{"shard": 12, "rows": 6000000}\`))
-            return IngestRes{Rows: 10_000_000}, nil
+            _ = report([]byte(\`{"shard": 4, "rows": 400000}\`))
+            return IngestRes{Rows: 1000000}, nil
         })
 
-    // Multi-node cluster address list for automatic leader failover
-    w := workerclient.New("n1:9090,n2:9090,n3:9090", reg, workerclient.Options{Concurrency: 16})
+    w := workerclient.New("n1:9090,n2:9090,n3:9090", reg, workerclient.Options{Concurrency: 8})
     _ = w.Run(context.Background())
 }`,
         json: `{
-  "name": "lakehouse-vector-etl",
+  "name": "batch-vector-etl",
   "steps": [
     {
-      "name": "ingest-parquet-shards",
-      "activity": "ingest-parquet-shards",
-      "retry_policy": { "max_attempts": 5, "backoff": 2000000000 }
+      "name": "ingest-parquet",
+      "activity": "ingest-parquet",
+      "retry_policy": { "max_attempts": 3, "backoff": 1000000000 }
     },
     {
-      "name": "schema-validate",
-      "activity": "schema-validate",
-      "depends_on": ["ingest-parquet-shards"]
+      "name": "validate-schema",
+      "activity": "validate-schema",
+      "depends_on": ["ingest-parquet"]
     },
     {
-      "name": "redact-pii-columns",
-      "activity": "redact-pii-columns",
-      "depends_on": ["ingest-parquet-shards"]
+      "name": "redact-pii",
+      "activity": "redact-pii",
+      "depends_on": ["ingest-parquet"]
     },
     {
-      "name": "gpu-vector-embed",
-      "activity": "gpu-vector-embed",
-      "depends_on": ["ingest-parquet-shards"]
+      "name": "build-vector-index",
+      "activity": "build-vector-index",
+      "depends_on": ["ingest-parquet"]
     },
     {
-      "name": "iceberg-snapshot-commit",
-      "activity": "iceberg-commit",
-      "depends_on": ["schema-validate", "redact-pii-columns", "gpu-vector-embed"],
-      "when": { "source": "schema-validate", "field": "passed", "op": "eq", "value": true }
+      "name": "commit-snapshot",
+      "activity": "commit-snapshot",
+      "depends_on": ["validate-schema", "redact-pii", "build-vector-index"],
+      "when": { "source": "validate-schema", "field": "valid", "op": "eq", "value": true }
     }
   ]
 }`
       },
       ml: {
         nodes: [
-          [{ id: "prep", title: "1. snapshot-training-corpus", meta: "compensating_action: purge-snapshot", progress: 100, status: "COMPLETED" }],
+          [{ id: "prep", title: "1. snapshot-dataset", meta: "undo: purge-snapshot", progress: 100, status: "COMPLETED" }],
           [
-            { id: "train", title: "2a. gpu-finetune-model", meta: "Epoch 10/10 • LastProgress enabled", progress: 100, status: "COMPLETED" },
-            { id: "redteam", title: "2b. adversarial-safety-scan", meta: "Parallel safety benchmark", progress: 100, status: "COMPLETED" }
+            { id: "train", title: "2a. finetune-model", meta: "depends_on: [1]", progress: 100, status: "COMPLETED" },
+            { id: "eval", title: "2b. safety-evaluation", meta: "depends_on: [1]", progress: 100, status: "COMPLETED" }
           ],
-          [{ id: "gate", title: "3. await-release-approval", meta: "wait_for_signal: \"release-decision\"", progress: 100, status: "COMPLETED" }],
-          [{ id: "canary", title: "4. promote-production-canary", meta: "when: signal.approved == true", progress: 100, status: "COMPLETED" }]
+          [{ id: "gate", title: "3. await-approval", meta: "wait_for_signal: \"release\"", progress: 100, status: "COMPLETED" }],
+          [{ id: "deploy", title: "4. promote-canary", meta: "when: approved == true", progress: 100, status: "COMPLETED" }]
         ],
         python: `from plexus_flow import WorkflowClient
 
 client = WorkflowClient("http://localhost:8080")
 
-# Start autonomous ML release pipeline with searchable metadata tags
 wf = client.start_workflow(
-    "ml-canary-release",
-    {"model": "plexus-llm-7b", "dataset": "s3://ml/corpus-v9"},
-    workflow_id="release-7b-v9",
-    metadata={"team": "foundation-ai", "gpu_tier": "h100"}
+    "model-release-pipeline",
+    {"model": "encoder-v2", "dataset": "s3://datasets/train-v4"},
+    workflow_id="release-encoder-v2",
+    metadata={"team": "ml-platform"}
 )
 
-# Approve the human-in-the-loop gate from Slackbot or CI webhook:
-client.signal_workflow("release-7b-v9", "release-decision", {"approved": True, "reviewer": "alice"})`,
-        go: `// Durable Signal Gate + Conditional Promotion in Go
-def := flow.WorkflowDefinition{
-    Name: "ml-canary-release",
+# Deliver external approval signal when review completes
+client.signal_workflow("release-encoder-v2", "release", {"approved": True})`,
+        go: `def := flow.WorkflowDefinition{
+    Name: "model-release-pipeline",
     Steps: []flow.StepDefinition{
-        {Name: "snapshot", Activity: "snapshot-corpus", CompensatingAction: "purge-snapshot"},
-        {Name: "finetune", Activity: "gpu-finetune", DependsOn: []string{"snapshot"}},
-        {Name: "await-approval", WaitForSignal: "release-decision", DependsOn: []string{"finetune"}},
+        {Name: "snapshot-dataset", Activity: "snapshot", CompensatingAction: "purge-snapshot"},
+        {Name: "finetune-model", Activity: "finetune", DependsOn: []string{"snapshot-dataset"}},
+        {Name: "safety-evaluation", Activity: "evaluate", DependsOn: []string{"snapshot-dataset"}},
+        {Name: "await-approval", WaitForSignal: "release", DependsOn: []string{"finetune-model", "safety-evaluation"}},
         {
-            Name: "promote-canary", Activity: "k8s-rollout",
+            Name: "promote-canary", Activity: "promote",
             DependsOn: []string{"await-approval"},
             When: &flow.Condition{Source: "await-approval", Field: "approved", Op: "eq", Value: []byte("true")},
         },
     },
 }`,
         json: `{
-  "name": "ml-canary-release",
+  "name": "model-release-pipeline",
   "steps": [
-    { "name": "snapshot-training-corpus", "activity": "snapshot-corpus", "compensating_action": "purge-snapshot" },
-    { "name": "gpu-finetune-model", "activity": "gpu-finetune", "depends_on": ["snapshot-training-corpus"] },
-    { "name": "adversarial-safety-scan", "activity": "safety-scan", "depends_on": ["snapshot-training-corpus"] },
+    { "name": "snapshot-dataset", "activity": "snapshot", "compensating_action": "purge-snapshot" },
+    { "name": "finetune-model", "activity": "finetune", "depends_on": ["snapshot-dataset"] },
+    { "name": "safety-evaluation", "activity": "evaluate", "depends_on": ["snapshot-dataset"] },
     {
-      "name": "await-release-approval",
-      "wait_for_signal": "release-decision",
-      "depends_on": ["gpu-finetune-model", "adversarial-safety-scan"]
+      "name": "await-approval",
+      "wait_for_signal": "release",
+      "depends_on": ["finetune-model", "safety-evaluation"]
     },
     {
-      "name": "promote-production-canary",
-      "activity": "promote-canary",
-      "depends_on": ["await-release-approval"],
-      "when": { "source": "await-release-approval", "field": "approved", "op": "eq", "value": true }
+      "name": "promote-canary",
+      "activity": "promote",
+      "depends_on": ["await-approval"],
+      "when": { "source": "await-approval", "field": "approved", "op": "eq", "value": true }
     }
   ]
 }`
@@ -1527,24 +1178,23 @@ def := flow.WorkflowDefinition{
       saga: {
         nodes: [
           [{ id: "reserve", title: "1. reserve-inventory", meta: "undo: release-inventory", progress: 100, status: "COMPLETED" }],
-          [{ id: "charge", title: "2. charge-card-stripe", meta: "undo: refund-card-stripe", progress: 100, status: "COMPLETED" }],
-          [{ id: "ship", title: "3. dispatch-warehouse-carrier", meta: "max_attempts: 3 • non_retryable: INVALID_ADDR", progress: 100, status: "COMPLETED" }]
+          [{ id: "charge", title: "2. charge-payment", meta: "undo: refund-payment", progress: 100, status: "COMPLETED" }],
+          [{ id: "ship", title: "3. ship-order", meta: "depends_on: [charge-payment]", progress: 100, status: "COMPLETED" }]
         ],
-        python: `@worker.activity("charge-card-stripe")
-def charge_card(ctx: ActivityContext, order: dict) -> dict:
-    return {"charge_id": "ch_99281", "charged": order["amount_cents"]}
+        python: `@worker.activity("charge-payment")
+def charge_payment(ctx: ActivityContext, order: dict) -> dict:
+    return {"charge_id": "ch_1042", "amount": order["amount"]}
 
-@worker.activity("refund-card-stripe")
-def refund_card(ctx: ActivityContext, order: dict) -> dict:
-    # Automatically invoked in reverse topological order if Step 3 fails!
+@worker.activity("refund-payment")
+def refund_payment(ctx: ActivityContext, order: dict) -> dict:
+    # Executed automatically in reverse order if a subsequent step fails
     return {"refunded": True, "order_id": order["order_id"]}`,
-        go: `// Non-retryable business error immediately triggers LIFO Saga Compensation
-worker.RegisterTyped(reg, "dispatch-warehouse-carrier",
+        go: `worker.RegisterTyped(reg, "ship-order",
     func(ctx context.Context, req Order) (Shipment, error) {
-        if req.ZipCode == "00000" {
-            return Shipment{}, worker.NewCodedError("INVALID_ADDR", errors.New("undeliverable zip"))
+        if req.InvalidAddress {
+            return Shipment{}, worker.NewCodedError("ERR_ADDRESS", errors.New("invalid address"))
         }
-        return Shipment{TrackingID: "TRK-8821"}, nil
+        return Shipment{TrackingID: "TRK-100"}, nil
     })`,
         json: `{
   "name": "order-fulfillment-saga",
@@ -1555,16 +1205,16 @@ worker.RegisterTyped(reg, "dispatch-warehouse-carrier",
       "compensating_action": "release-inventory"
     },
     {
-      "name": "charge-card-stripe",
-      "activity": "charge-card-stripe",
-      "compensating_action": "refund-card-stripe",
+      "name": "charge-payment",
+      "activity": "charge-payment",
+      "compensating_action": "refund-payment",
       "depends_on": ["reserve-inventory"]
     },
     {
-      "name": "dispatch-warehouse-carrier",
-      "activity": "dispatch-warehouse-carrier",
-      "depends_on": ["charge-card-stripe"],
-      "retry_policy": { "max_attempts": 3, "non_retryable_errors": ["INVALID_ADDR"] }
+      "name": "ship-order",
+      "activity": "ship-order",
+      "depends_on": ["charge-payment"],
+      "retry_policy": { "max_attempts": 2, "non_retryable_errors": ["ERR_ADDRESS"] }
     }
   ]
 }`
@@ -1580,14 +1230,14 @@ worker.RegisterTyped(reg, "dispatch-warehouse-carrier",
       container.innerHTML = rows.map(row => `
         <div class="dag-row">
           ${row.map(node => `
-            <div class="dag-node ${node.status}">
-              <div class="dag-node-header">
-                <span class="dag-node-title">${node.title}</span>
-                <span class="dag-status">${node.status}</span>
+            <div class="step-box ${node.status}">
+              <div class="step-top">
+                <span class="step-name">${node.title}</span>
+                <span class="step-state">${node.status}</span>
               </div>
-              <div class="dag-node-meta">${node.meta}</div>
-              <div class="progress-track">
-                <div class="progress-fill" style="width:${node.progress}%"></div>
+              <div class="step-meta">${node.meta}</div>
+              <div class="progress-bar">
+                <div class="progress-val" style="width:${node.progress}%"></div>
               </div>
             </div>
           `).join("")}
@@ -1596,54 +1246,59 @@ worker.RegisterTyped(reg, "dispatch-warehouse-carrier",
     }
 
     function renderCode() {
-      document.getElementById("playground-code").textContent = SCENARIOS[currentScenario][currentCodeLang];
+      const codeEl = document.getElementById("playground-code");
+      codeEl.className = "language-" + currentCodeLang;
+      codeEl.textContent = SCENARIOS[currentScenario][currentCodeLang];
+      delete codeEl.dataset.highlighted;
+      if (window.hljs) {
+        hljs.highlightElement(codeEl);
+      }
     }
 
-    function resetClusterPills() {
-      document.getElementById("pill-n1").className = "node-pill leader";
-      document.getElementById("pill-n1").textContent = "● node-1 (LEADER)";
-      document.getElementById("pill-n2").className = "node-pill";
-      document.getElementById("pill-n2").textContent = "● node-2 (VOTER)";
-      document.getElementById("pill-n3").className = "node-pill";
-      document.getElementById("pill-n3").textContent = "● node-3 (VOTER)";
+    function resetNodes() {
+      document.getElementById("pill-n1").className = "node-tag leader";
+      document.getElementById("pill-n1").textContent = "node-1 (leader)";
+      document.getElementById("pill-n2").className = "node-tag";
+      document.getElementById("pill-n2").textContent = "node-2 (voter)";
+      document.getElementById("pill-n3").className = "node-tag";
+      document.getElementById("pill-n3").textContent = "node-3 (voter)";
     }
 
     function selectScenario(key, btn) {
       clearInterval(simTimer);
       currentScenario = key;
-      document.querySelectorAll(".scenario-tab").forEach(b => b.classList.remove("active"));
+      document.querySelectorAll(".tab-btn").forEach(b => b.classList.remove("active"));
       btn.classList.add("active");
-      resetClusterPills();
-      const clone = JSON.parse(JSON.stringify(SCENARIOS[key].nodes));
-      renderDAG(clone);
+      resetNodes();
+      renderDAG(JSON.parse(JSON.stringify(SCENARIOS[key].nodes)));
       renderCode();
-      document.getElementById("sim-log").textContent = `[Loaded ${key.toUpperCase()}] All steps COMPLETED with consensus-level EOS.`;
+      document.getElementById("sim-log").textContent = `Loaded "${key}" workflow definition.`;
     }
 
     function switchCodeTab(lang, btn) {
       currentCodeLang = lang;
-      document.querySelectorAll(".code-tab").forEach(b => b.classList.remove("active"));
+      document.querySelectorAll(".lang-btn").forEach(b => b.classList.remove("active"));
       btn.classList.add("active");
       renderCode();
     }
 
     function runSimulation() {
       clearInterval(simTimer);
-      resetClusterPills();
+      resetNodes();
       const rows = JSON.parse(JSON.stringify(SCENARIOS[currentScenario].nodes));
       rows.forEach(r => r.forEach(n => { n.status = "PENDING"; n.progress = 0; }));
       renderDAG(rows);
 
       let stage = 0;
-      document.getElementById("sim-log").textContent = `[Raft Term 4] Dispatched stage 1 with deterministic EOS key (workflow-raft:4:108:0)...`;
+      document.getElementById("sim-log").textContent = "Dispatching initial stage via Raft FSM...";
 
       simTimer = setInterval(() => {
         if (stage >= rows.length) {
           clearInterval(simTimer);
-          document.getElementById("sim-log").textContent = `[Workflow COMPLETED] All stages committed to Raft FSM & indexed in <1ms.`;
+          document.getElementById("sim-log").textContent = "Workflow reached COMPLETED state.";
           return;
         }
-        rows[stage].forEach(n => { n.status = "RUNNING"; n.progress = 55; });
+        rows[stage].forEach(n => { n.status = "RUNNING"; n.progress = 50; });
         renderDAG(rows);
         setTimeout(() => {
           if (rows[stage]) {
@@ -1651,46 +1306,46 @@ worker.RegisterTyped(reg, "dispatch-warehouse-carrier",
             renderDAG(rows);
           }
           stage++;
-        }, 420);
-      }, 850);
+        }, 380);
+      }, 800);
     }
 
     function simulateFailure() {
       clearInterval(simTimer);
-      resetClusterPills();
+      resetNodes();
       const rows = JSON.parse(JSON.stringify(SCENARIOS[currentScenario].nodes));
-      const lastIdx = rows.length - 1;
-      rows[lastIdx][0].status = "FAILED";
-      rows[lastIdx][0].progress = 40;
+      const last = rows.length - 1;
+      rows[last][0].status = "FAILED";
+      rows[last][0].progress = 35;
       renderDAG(rows);
 
       if (currentScenario === "saga") {
-        document.getElementById("sim-log").textContent = `[Step 3 FAILED: INVALID_ADDR] Triggering automatic LIFO Saga compensation in reverse order...`;
+        document.getElementById("sim-log").textContent = "Step 3 failed. Running compensating actions in reverse topological order...";
         setTimeout(() => {
           rows[1][0].status = "ROLLED_BACK";
           rows[0][0].status = "ROLLED_BACK";
           renderDAG(rows);
-          document.getElementById("sim-log").textContent = `[Workflow COMPENSATED] refund-card-stripe & release-inventory executed exactly once.`;
-        }, 700);
+          document.getElementById("sim-log").textContent = "Workflow state: COMPENSATED.";
+        }, 650);
       } else {
-        document.getElementById("sim-log").textContent = `[Downstream Step FAILED] Upstream data ingestion outputs remain safely cached in Raft FSM. Click "⏪ Time-Travel /replay" to resume!`;
+        document.getElementById("sim-log").textContent = "Downstream step failed; upstream outputs remain stored. Use 'Replay Step (/replay)' to retry from this step.";
       }
     }
 
     function simulateReplay() {
       clearInterval(simTimer);
       const rows = JSON.parse(JSON.stringify(SCENARIOS[currentScenario].nodes));
-      const lastIdx = rows.length - 1;
-      rows[lastIdx][0].status = "RUNNING";
-      rows[lastIdx][0].progress = 65;
+      const last = rows.length - 1;
+      rows[last][0].status = "RUNNING";
+      rows[last][0].progress = 60;
       renderDAG(rows);
-      document.getElementById("sim-log").textContent = `[POST /replay] Rewinding ONLY "${rows[lastIdx][0].title}" — preserving expensive upstream step outputs!`;
+      document.getElementById("sim-log").textContent = `Replaying step "${rows[last][0].title}" without re-running completed upstream steps...`;
       setTimeout(() => {
-        rows[lastIdx][0].status = "COMPLETED";
-        rows[lastIdx][0].progress = 100;
+        rows[last][0].status = "COMPLETED";
+        rows[last][0].progress = 100;
         renderDAG(rows);
-        document.getElementById("sim-log").textContent = `[Replay COMPLETED] Downstream step succeeded in 320ms without re-running upstream ingestion!`;
-      }, 750);
+        document.getElementById("sim-log").textContent = "Replay finished; workflow state: COMPLETED.";
+      }, 700);
     }
 
     function simulateLeaderKill() {
@@ -1698,36 +1353,40 @@ worker.RegisterTyped(reg, "dispatch-warehouse-carrier",
       const rows = JSON.parse(JSON.stringify(SCENARIOS[currentScenario].nodes));
       rows[0][0].status = "RUNNING";
       rows[0][0].progress = 60;
-      rows[0][0].meta = "LastProgress: {\"offset\": 6000000} replicated";
+      rows[0][0].meta = "LastProgress: {\"shard\": 6}";
       for (let i = 1; i < rows.length; i++) {
         rows[i].forEach(n => { n.status = "PENDING"; n.progress = 0; });
       }
       renderDAG(rows);
 
-      document.getElementById("pill-n1").className = "node-pill dead";
-      document.getElementById("pill-n1").textContent = "✕ node-1 (KILLED)";
-      document.getElementById("pill-n2").className = "node-pill leader";
-      document.getElementById("pill-n2").textContent = "● node-2 (NEW LEADER)";
-      document.getElementById("sim-log").textContent = `[Leader Killed @ 60%] node-2 elected Raft Leader in 275ms! Worker reconnected & resumed from LastProgress offset 6,000,000...`;
+      document.getElementById("pill-n1").className = "node-tag offline";
+      document.getElementById("pill-n1").textContent = "node-1 (stopped)";
+      document.getElementById("pill-n2").className = "node-tag leader";
+      document.getElementById("pill-n2").textContent = "node-2 (leader)";
+      document.getElementById("sim-log").textContent = "node-1 stopped; node-2 elected leader. Worker resuming from LastProgress...";
 
       setTimeout(() => {
         rows.forEach(r => r.forEach(n => { n.status = "COMPLETED"; n.progress = 100; }));
         renderDAG(rows);
-        document.getElementById("sim-log").textContent = `[Failover Recovery COMPLETED] Pipeline finished on node-2 with zero lost batches and zero duplicate commits.`;
-      }, 1100);
+        document.getElementById("sim-log").textContent = "Workflow completed on node-2 after failover.";
+      }, 1000);
     }
 
-    function copyText(id, btn) {
-      const text = document.getElementById(id).textContent;
-      navigator.clipboard.writeText(text);
+    function copyCode(btn) {
+      const code = btn.closest(".code-box").querySelector("code").textContent;
+      navigator.clipboard.writeText(code);
       const prev = btn.textContent;
-      btn.textContent = "Copied!";
-      setTimeout(() => { btn.textContent = prev; }, 1500);
+      btn.textContent = "Copied";
+      setTimeout(() => { btn.textContent = prev; }, 1200);
     }
 
-    // Initialize default view
-    renderDAG(SCENARIOS.etl.nodes);
-    renderCode();
+    document.addEventListener("DOMContentLoaded", () => {
+      if (window.hljs) {
+        hljs.highlightAll();
+      }
+      renderDAG(SCENARIOS.etl.nodes);
+      renderCode();
+    });
   </script>
 </body>
 </html>

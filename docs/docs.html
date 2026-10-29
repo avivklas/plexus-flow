@@ -1,29 +1,30 @@
 <!DOCTYPE html>
-<html lang="en" class="dark">
+<html lang="en">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Plexus-Flow Documentation — Developer Guide, SDKs, REST API &amp; Raft Clustering</title>
-  <meta name="description" content="Complete technical documentation for Plexus-Flow: Quick Start, DAG & Saga definitions, Data Pipeline Checkpointing, Time-Travel Step Replay, Go & Python SDKs, REST/SSE APIs, and Multi-Node Raft Clustering." />
+  <title>Plexus-Flow Documentation</title>
+  <meta name="description" content="Technical documentation for Plexus-Flow: workflow definitions, data pipeline checkpointing, step replay, Go and Python SDKs, HTTP API, and Raft clustering." />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css" />
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/json.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
   <style>
     :root {
       color-scheme: dark;
-      --bg-0: #06080f;
-      --bg-1: #0b0f1c;
-      --bg-2: #11182b;
-      --surface: rgba(17, 24, 43, 0.82);
-      --border: rgba(148, 163, 184, 0.15);
-      --border-hi: rgba(99, 102, 241, 0.45);
-      --text-0: #f8fafc;
-      --text-1: #cbd5e1;
-      --text-2: #94a3b8;
-      --accent: #6366f1;
-      --accent-2: #22d3ee;
-      --emerald: #10b981;
-      --amber: #f59e0b;
+      --bg: #0d1117;
+      --surface: #161b22;
+      --surface-alt: #090d11;
+      --border: #30363d;
+      --text: #e6edf3;
+      --text-muted: #8b949e;
+      --primary: #2f81f7;
+      --primary-hover: #1f6feb;
     }
 
     * {
@@ -33,18 +34,11 @@
     }
 
     html {
-      scroll-behavior: smooth;
       font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
-      background-color: var(--bg-0);
-      color: var(--text-0);
-      line-height: 1.65;
-    }
-
-    body {
-      background:
-        radial-gradient(circle at 10% 0%, rgba(99, 102, 241, 0.12), transparent 35%),
-        radial-gradient(circle at 90% 10%, rgba(34, 211, 238, 0.1), transparent 35%),
-        var(--bg-0);
+      background-color: var(--bg);
+      color: var(--text);
+      line-height: 1.6;
+      font-size: 15px;
     }
 
     code, pre, .mono {
@@ -52,25 +46,28 @@
     }
 
     a {
-      color: inherit;
+      color: var(--primary);
       text-decoration: none;
     }
 
-    /* Header */
+    a:hover {
+      text-decoration: underline;
+    }
+
+    /* Flat Header */
     .navbar {
       position: sticky;
       top: 0;
-      z-index: 100;
-      backdrop-filter: blur(16px);
-      background: rgba(6, 8, 15, 0.88);
+      z-index: 50;
+      background: var(--surface);
       border-bottom: 1px solid var(--border);
     }
 
     .nav-inner {
-      max-width: 1400px;
+      max-width: 1280px;
       margin: 0 auto;
       padding: 0 1.5rem;
-      height: 66px;
+      height: 56px;
       display: flex;
       align-items: center;
       justify-content: space-between;
@@ -78,41 +75,32 @@
     }
 
     .brand {
-      display: flex;
-      align-items: center;
-      gap: 0.7rem;
-      font-weight: 800;
-      font-size: 1.1rem;
+      font-weight: 700;
+      font-size: 1rem;
+      color: var(--text);
     }
 
-    .brand-icon {
-      width: 32px;
-      height: 32px;
-      border-radius: 8px;
-      background: linear-gradient(135deg, var(--accent), var(--accent-2));
-      display: grid;
-      place-items: center;
+    .brand:hover {
+      text-decoration: none;
     }
 
     .search-box {
       flex: 1;
-      max-width: 420px;
-      position: relative;
+      max-width: 360px;
     }
 
     .search-box input {
       width: 100%;
-      background: rgba(17, 24, 43, 0.9);
+      background: var(--bg);
       border: 1px solid var(--border);
-      border-radius: 8px;
-      padding: 0.5rem 0.9rem;
-      color: #fff;
-      font-size: 0.86rem;
+      padding: 0.38rem 0.75rem;
+      color: var(--text);
+      font-size: 0.84rem;
       outline: none;
     }
 
     .search-box input:focus {
-      border-color: var(--accent-2);
+      border-color: var(--primary);
     }
 
     .nav-links {
@@ -120,318 +108,296 @@
       align-items: center;
       gap: 1.25rem;
       font-size: 0.88rem;
-      color: var(--text-1);
     }
 
-    .btn-sm {
-      padding: 0.45rem 0.95rem;
-      border-radius: 8px;
-      font-weight: 600;
-      font-size: 0.84rem;
-      background: linear-gradient(135deg, var(--accent), #4f46e5);
-      color: #fff;
+    .nav-links a {
+      color: var(--text-muted);
     }
 
-    /* Docs Layout */
+    .nav-links a:hover {
+      color: var(--text);
+      text-decoration: none;
+    }
+
+    /* Layout */
     .docs-layout {
-      max-width: 1400px;
+      max-width: 1280px;
       margin: 0 auto;
       display: grid;
-      grid-template-columns: 280px minmax(0, 1fr);
+      grid-template-columns: 240px minmax(0, 1fr);
       gap: 2.5rem;
-      padding: 2rem 1.5rem 5rem;
+      padding: 2rem 1.5rem 4rem;
     }
 
-    @media (max-width: 960px) {
+    @media (max-width: 900px) {
       .docs-layout {
         grid-template-columns: 1fr;
       }
       .sidebar {
         position: static !important;
-        max-height: none !important;
       }
     }
 
     .sidebar {
       position: sticky;
-      top: 86px;
-      max-height: calc(100vh - 106px);
-      overflow-y: auto;
-      padding-right: 0.5rem;
+      top: 76px;
+      align-self: start;
     }
 
     .sidebar-group {
-      margin-bottom: 1.5rem;
+      margin-bottom: 1.4rem;
     }
 
     .sidebar-title {
-      font-size: 0.72rem;
-      font-weight: 700;
+      font-size: 0.74rem;
+      font-weight: 600;
       text-transform: uppercase;
-      letter-spacing: 0.08em;
-      color: var(--accent-2);
-      margin-bottom: 0.55rem;
+      letter-spacing: 0.05em;
+      color: var(--text-muted);
+      margin-bottom: 0.45rem;
     }
 
     .sidebar-links {
       list-style: none;
-      display: flex;
-      flex-direction: column;
-      gap: 0.25rem;
     }
 
     .sidebar-links a {
       display: block;
-      padding: 0.4rem 0.65rem;
-      border-radius: 6px;
-      font-size: 0.86rem;
-      color: var(--text-1);
-      transition: all 0.15s ease;
+      padding: 0.3rem 0.55rem;
+      font-size: 0.85rem;
+      color: var(--text-muted);
+      border-left: 2px solid transparent;
     }
 
     .sidebar-links a:hover {
-      background: rgba(99, 102, 241, 0.14);
-      color: #fff;
+      color: var(--text);
+      border-left-color: var(--primary);
+      background: var(--surface);
+      text-decoration: none;
     }
 
     /* Main Content */
-    .docs-content {
-      min-width: 0;
-    }
-
     .doc-section {
-      padding-bottom: 3.5rem;
-      margin-bottom: 3.5rem;
+      padding-bottom: 2.5rem;
+      margin-bottom: 2.5rem;
       border-bottom: 1px solid var(--border);
-      scroll-margin-top: 86px;
+      scroll-margin-top: 72px;
     }
 
     .doc-section h1 {
-      font-size: 2.4rem;
-      font-weight: 800;
-      letter-spacing: -0.03em;
-      margin-bottom: 0.75rem;
+      font-size: 1.85rem;
+      font-weight: 700;
+      margin-bottom: 0.65rem;
     }
 
     .doc-section h2 {
-      font-size: 1.65rem;
-      font-weight: 800;
-      letter-spacing: -0.02em;
-      margin: 2rem 0 0.85rem;
-      color: #fff;
+      font-size: 1.35rem;
+      font-weight: 700;
+      margin: 1.5rem 0 0.65rem;
     }
 
     .doc-section h3 {
-      font-size: 1.18rem;
-      font-weight: 700;
-      margin: 1.6rem 0 0.6rem;
-      color: #e2e8f0;
+      font-size: 1.05rem;
+      font-weight: 600;
+      margin: 1.35rem 0 0.5rem;
     }
 
     .doc-section p {
-      color: var(--text-1);
-      margin-bottom: 1rem;
-      font-size: 0.96rem;
+      color: var(--text-muted);
+      margin-bottom: 0.85rem;
     }
 
-    .doc-section ul, .doc-section ol {
-      margin: 0.5rem 0 1.25rem 1.4rem;
-      color: var(--text-1);
-      font-size: 0.95rem;
+    .doc-section ul {
+      margin: 0.4rem 0 1rem 1.25rem;
+      color: var(--text-muted);
     }
 
     .doc-section li {
-      margin-bottom: 0.4rem;
+      margin-bottom: 0.35rem;
+    }
+
+    .doc-section li strong, .doc-section p strong {
+      color: var(--text);
     }
 
     .doc-section code:not(pre code) {
-      background: rgba(99, 102, 241, 0.14);
-      color: #c7d2fe;
-      padding: 0.15rem 0.42rem;
-      border-radius: 5px;
-      font-size: 0.84em;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      padding: 0.1rem 0.35rem;
+      font-size: 0.82em;
+      color: var(--text);
     }
 
     .code-block {
-      position: relative;
-      background: #080b14;
       border: 1px solid var(--border);
-      border-radius: 10px;
-      margin: 1rem 0 1.5rem;
-      overflow: hidden;
+      background: var(--surface-alt);
+      margin: 0.75rem 0 1.25rem;
     }
 
     .code-header {
       display: flex;
       align-items: center;
       justify-content: space-between;
-      padding: 0.5rem 0.95rem;
-      background: rgba(17, 24, 43, 0.85);
+      padding: 0.4rem 0.85rem;
+      background: var(--surface);
       border-bottom: 1px solid var(--border);
-      font-size: 0.75rem;
+      font-size: 0.74rem;
       font-family: 'JetBrains Mono', monospace;
-      color: var(--text-2);
+      color: var(--text-muted);
     }
 
     .code-block pre {
-      padding: 1.1rem 1.25rem;
+      padding: 0.9rem 1rem;
       overflow-x: auto;
-      font-size: 0.82rem;
-      line-height: 1.65;
-      color: #e2e8f0;
+      font-size: 0.8rem;
+      line-height: 1.55;
+      margin: 0;
+    }
+
+    .code-block pre code.hljs {
+      padding: 0;
+      background: transparent;
     }
 
     .copy-code-btn {
-      background: rgba(255, 255, 255, 0.06);
+      background: var(--bg);
       border: 1px solid var(--border);
-      color: var(--text-1);
-      border-radius: 5px;
-      padding: 0.18rem 0.55rem;
+      color: var(--text-muted);
+      padding: 0.15rem 0.5rem;
       font-size: 0.72rem;
       cursor: pointer;
     }
 
     .copy-code-btn:hover {
-      background: rgba(99, 102, 241, 0.25);
-      color: #fff;
+      color: var(--text);
+      border-color: var(--text-muted);
     }
 
-    .callout {
-      padding: 1rem 1.25rem;
-      border-radius: 10px;
-      background: rgba(99, 102, 241, 0.1);
-      border-left: 4px solid var(--accent);
-      margin: 1.25rem 0;
-      font-size: 0.92rem;
-      color: var(--text-1);
-    }
-
-    .callout.tip {
-      background: rgba(16, 185, 129, 0.1);
-      border-left-color: var(--emerald);
+    .note {
+      padding: 0.85rem 1rem;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-left: 3px solid var(--primary);
+      margin: 1rem 0;
+      font-size: 0.88rem;
+      color: var(--text-muted);
     }
 
     .doc-table-wrap {
       overflow-x: auto;
-      margin: 1rem 0 1.6rem;
+      margin: 0.85rem 0 1.35rem;
       border: 1px solid var(--border);
-      border-radius: 10px;
     }
 
     table.doc-table {
       width: 100%;
       border-collapse: collapse;
-      font-size: 0.86rem;
+      font-size: 0.84rem;
       text-align: left;
     }
 
     .doc-table th, .doc-table td {
-      padding: 0.75rem 1rem;
+      padding: 0.65rem 0.9rem;
       border-bottom: 1px solid var(--border);
+      background: var(--surface);
     }
 
     .doc-table th {
-      background: rgba(17, 24, 43, 0.9);
-      color: #fff;
+      background: var(--bg);
+      color: var(--text);
       font-weight: 600;
+    }
+
+    .doc-table td {
+      color: var(--text-muted);
     }
   </style>
 </head>
 <body>
 
-  <!-- Header -->
   <header class="navbar">
     <div class="nav-inner">
-      <a href="index.html" class="brand">
-        <div class="brand-icon">⚡</div>
-        <span>Plexus-Flow Docs</span>
-      </a>
+      <a href="index.html" class="brand">plexus-flow / docs</a>
       <div class="search-box">
-        <input type="search" id="doc-search" placeholder="Filter documentation sections (e.g. replay, progress, cron, raft)..." oninput="filterDocs(this.value)" />
+        <input type="search" id="doc-search" placeholder="Filter sections (e.g. replay, progress, cron, raft)..." oninput="filterDocs(this.value)" />
       </div>
       <div class="nav-links">
-        <a href="index.html">← Product Landing Page</a>
-        <a href="index.html#playground">Live Simulator</a>
-        <a href="https://github.com/avivklas/plexus-flow" class="btn-sm" target="_blank" rel="noopener">GitHub ★</a>
+        <a href="index.html">Overview</a>
+        <a href="index.html#walkthrough">Walkthrough</a>
+        <a href="https://github.com/avivklas/plexus-flow" target="_blank" rel="noopener">GitHub</a>
       </div>
     </div>
   </header>
 
   <div class="docs-layout">
-    <!-- Sticky Sidebar Navigation -->
     <aside class="sidebar">
       <div class="sidebar-group">
         <div class="sidebar-title">Getting Started</div>
         <ul class="sidebar-links">
-          <li><a href="#quickstart">60-Second Quick Start</a></li>
-          <li><a href="#examples">Runnable Examples</a></li>
-          <li><a href="#architecture-overview">Dual-Raft Graph Architecture</a></li>
+          <li><a href="#quickstart">Quick Start</a></li>
+          <li><a href="#examples">Examples</a></li>
+          <li><a href="#architecture-overview">Architecture</a></li>
         </ul>
       </div>
 
       <div class="sidebar-group">
-        <div class="sidebar-title">Core Concepts</div>
+        <div class="sidebar-title">Workflow Model</div>
         <ul class="sidebar-links">
-          <li><a href="#concepts">Workflow &amp; Step Schema</a></li>
-          <li><a href="#fork-join">Fork-Join DAG Parallelism</a></li>
-          <li><a href="#conditions">Conditional Branching (<code>when</code>)</a></li>
-          <li><a href="#sagas">LIFO Saga Compensation</a></li>
-          <li><a href="#timers-signals">Durable Timers &amp; Signals</a></li>
-          <li><a href="#cron-schedules">Durable Cron Schedules</a></li>
+          <li><a href="#concepts">Definition Schema</a></li>
+          <li><a href="#fork-join">Fork-Join DAGs</a></li>
+          <li><a href="#conditions">Conditions (when)</a></li>
+          <li><a href="#sagas">Saga Compensation</a></li>
+          <li><a href="#timers-signals">Timers &amp; Signals</a></li>
+          <li><a href="#cron-schedules">Cron Schedules</a></li>
         </ul>
       </div>
 
       <div class="sidebar-group">
-        <div class="sidebar-title">Data-Heavy Pipelines</div>
+        <div class="sidebar-title">Data Pipelines</div>
         <ul class="sidebar-links">
-          <li><a href="#data-pipelines">Progress Checkpointing</a></li>
-          <li><a href="#time-travel-replay">Time-Travel Step Replay</a></li>
-          <li><a href="#retries-errors">Selective Retries &amp; Error Codes</a></li>
-          <li><a href="#faceted-search">Zero-CDC Faceted Search</a></li>
+          <li><a href="#data-pipelines">Progress Checkpoints</a></li>
+          <li><a href="#time-travel-replay">Step Replay</a></li>
+          <li><a href="#retries-errors">Retries &amp; Error Codes</a></li>
+          <li><a href="#faceted-search">Faceted Search</a></li>
         </ul>
       </div>
 
       <div class="sidebar-group">
         <div class="sidebar-title">SDKs &amp; APIs</div>
         <ul class="sidebar-links">
-          <li><a href="#go-sdk">Go SDK &amp; Embedded Engine</a></li>
-          <li><a href="#python-sdk">Python Worker &amp; Client SDK</a></li>
-          <li><a href="#api-reference">HTTP REST &amp; SSE Reference</a></li>
+          <li><a href="#go-sdk">Go SDK</a></li>
+          <li><a href="#python-sdk">Python SDK</a></li>
+          <li><a href="#api-reference">HTTP &amp; SSE API</a></li>
         </ul>
       </div>
 
       <div class="sidebar-group">
-        <div class="sidebar-title">Production Operations</div>
+        <div class="sidebar-title">Operations</div>
         <ul class="sidebar-links">
-          <li><a href="#clustering">3-Node Raft Cluster Setup</a></li>
-          <li><a href="#cli-flags">CLI Flags &amp; Environment Vars</a></li>
-          <li><a href="#retention-cold-storage">Retention GC &amp; Cold Archival</a></li>
-          <li><a href="#battle-tests">Chaos &amp; Concurrency Suite</a></li>
+          <li><a href="#clustering">Raft Clustering</a></li>
+          <li><a href="#cli-flags">CLI Flags &amp; Env Vars</a></li>
+          <li><a href="#retention-cold-storage">Retention &amp; Archival</a></li>
+          <li><a href="#battle-tests">Test Suite</a></li>
         </ul>
       </div>
     </aside>
 
-    <!-- Main Documentation Body -->
-    <main class="docs-content">
-
+    <main>
       <!-- 1. Quick Start -->
       <section class="doc-section" id="quickstart">
-        <h1>Plexus-Flow Developer Documentation</h1>
+        <h1>Plexus-Flow Documentation</h1>
         <p>
-          <strong>Plexus-Flow</strong> is a distributed, Raft-native workflow, DAG, and Saga orchestration engine packaged as a single Go binary.
-          It combines a deterministic Raft consensus state machine (<code>FlowStore</code>), a lease-based distributed task queue (<code>ActivityStore</code>),
-          an in-memory faceted search index, a gRPC remote worker broker, and a real-time Web UI—requiring <strong>zero external databases or message brokers</strong>.
+          <code>plexus-flow</code> is a workflow, DAG, and Saga orchestration engine packaged as a single Go binary.
+          It coordinates multi-step workflows across in-process or remote gRPC workers using two embedded Raft consensus groups (<code>FlowStore</code> and <code>ActivityStore</code>) backed by BoltDB.
         </p>
 
-        <h2>60-Second Quick Start</h2>
-        <p>Build and start a production single-node server with the embedded HTTP API, Web UI (`:8080`), and gRPC Worker Broker (`:9090`):</p>
+        <h2>Quick Start</h2>
+        <p>Build the binary and start a single-node server:</p>
 
         <div class="code-block">
-          <div class="code-header"><span>bash — Start Production Server</span><button class="copy-code-btn" onclick="copyPre(this)">Copy</button></div>
-          <pre><code># Build the plexus-flow server binary
-go build -o bin/plexus-flow ./cmd/plexus-flow
+          <div class="code-header"><span>bash</span><button class="copy-code-btn" onclick="copyPre(this)">Copy</button></div>
+          <pre><code class="language-bash">go build -o bin/plexus-flow ./cmd/plexus-flow
 
-# Start a single-node server with persistent BoltDB storage and pre-loaded JSON flows
 ./bin/plexus-flow \
   --id node-1 \
   --http-addr :8080 \
@@ -441,63 +407,60 @@ go build -o bin/plexus-flow ./cmd/plexus-flow
   --data-dir ./data/node-1</code></pre>
         </div>
 
-        <h3 id="examples">Run the Interactive Examples</h3>
-        <p>Plexus-Flow ships with two standalone interactive showcase applications in <code>./examples</code>:</p>
+        <h3 id="examples">Runnable Examples</h3>
+        <p>The repository includes two standalone examples in <code>./examples</code>:</p>
         <div class="code-block">
-          <div class="code-header"><span>bash — Run Order Saga &amp; ML Release Showcases</span><button class="copy-code-btn" onclick="copyPre(this)">Copy</button></div>
-          <pre><code># 1. E-Commerce Order Fulfillment Saga (Happy Path + Simulated Failure Rollback)
+          <div class="code-header"><span>bash</span><button class="copy-code-btn" onclick="copyPre(this)">Copy</button></div>
+          <pre><code class="language-bash"># Order Fulfillment Saga (happy path and simulated failure rollback)
 go run ./examples/ordersaga
 go run ./examples/ordersaga --simulate-failure --fail-step ship-order
 
-# Keep the dashboard live at http://localhost:8080 to trigger orders interactively:
+# Keep the web UI running on http://localhost:8080:
 go run ./examples/ordersaga --serve --http-addr :8080
 
-# 2. Autonomous ML Canary Release Pipeline (Fork-Join + Conditional Branching + Signal Gate + Cron)
+# ML Canary Release Pipeline (Fork-Join DAG, conditional branching, signal gate, cron)
 go run ./examples/mlrelease</code></pre>
         </div>
 
-        <h3 id="architecture-overview">Dual-Raft Graph Architecture &amp; Consensus-Level EOS</h3>
-        <p>
-          Every Plexus-Flow node hosts two coordinated Raft state machines connected by a deterministic bridge:
-        </p>
+        <h3 id="architecture-overview">Dual-Raft Architecture</h3>
         <ul>
-          <li><strong>Upstream (<code>FlowStore</code>)</strong>: Manages workflow definitions, workflow instances, DAG dependency evaluation, conditional branching, timers, signals, cron schedules, and the inverted search index.</li>
-          <li><strong>Downstream (<code>ActivityStore</code>)</strong>: Manages pending activity tasks, worker leases, heartbeats, retry backoffs, and task completion/failure records.</li>
-          <li><strong>Deterministic Idempotency Key (<code>UpstreamID:Term:Index:Seq</code>)</strong>: Every task emitted when a Raft log entry commits carries its exact Raft coordinates. If a leader crashes mid-dispatch and the new leader re-evaluates the log, <code>ActivityStore</code> deterministically absorbs the duplicate emission as an O(1) no-op.</li>
+          <li><strong>Upstream (<code>FlowStore</code>)</strong>: Maintains workflow definitions, workflow execution state, DAG dependency resolution, conditional predicates, timers, signals, cron schedules, and the in-memory search index.</li>
+          <li><strong>Downstream (<code>ActivityStore</code>)</strong>: Manages queued activity tasks, worker leases, heartbeats, retry scheduling, and task completion records.</li>
+          <li><strong>Idempotent Dispatch Key (<code>UpstreamID:Term:Index:Seq</code>)</strong>: Every task emitted when an upstream Raft log entry commits carries its Raft log coordinates. If a leader fails and a new leader re-evaluates the transition, <code>ActivityStore</code> deduplicates the emission using this key.</li>
         </ul>
       </section>
 
-      <!-- 2. Core Concepts -->
+      <!-- 2. Workflow Model -->
       <section class="doc-section" id="concepts">
-        <h2>Core Concepts &amp; Declarative Workflow Schema</h2>
+        <h2>Workflow &amp; Step Definition Schema</h2>
         <p>
-          Workflows are registered via JSON (`POST /api/v1/definitions`), startup flag (`--flows=./flows/*.json`), or the Go/Python SDKs.
+          Workflow definitions can be registered via HTTP (<code>POST /api/v1/definitions</code>), loaded at startup with <code>--flows=./flows/*.json</code>, or submitted through the Go and Python clients.
         </p>
 
         <div class="code-block">
-          <div class="code-header"><span>json — Complete WorkflowDefinition Example</span><button class="copy-code-btn" onclick="copyPre(this)">Copy</button></div>
-          <pre><code>{
-  "name": "data-lake-ingestion-pipeline",
+          <div class="code-header"><span>json</span><button class="copy-code-btn" onclick="copyPre(this)">Copy</button></div>
+          <pre><code class="language-json">{
+  "name": "data-ingestion-pipeline",
   "steps": [
     {
-      "name": "extract-raw-events",
+      "name": "extract-parquet",
       "activity": "s3.extract_parquet",
       "compensating_action": "s3.cleanup_staging",
       "retry_policy": {
         "max_attempts": 4,
         "backoff": 1000000000,
-        "non_retryable_errors": ["ERR_CORRUPT_SCHEMA", "ERR_AUTH_REVOKED"]
+        "non_retryable_errors": ["ERR_CORRUPT_SCHEMA"]
       }
     },
     {
-      "name": "transform-cleanse",
+      "name": "cleanse-records",
       "activity": "spark.cleanse",
-      "depends_on": ["extract-raw-events"]
+      "depends_on": ["extract-parquet"]
     },
     {
-      "name": "build-vector-index",
+      "name": "embed-vectors",
       "activity": "gpu.embed_chunks",
-      "depends_on": ["extract-raw-events"],
+      "depends_on": ["extract-parquet"],
       "when": {
         "source": "input",
         "field": "enable_embeddings",
@@ -506,21 +469,21 @@ go run ./examples/mlrelease</code></pre>
       }
     },
     {
-      "name": "cooldown-window",
+      "name": "cooldown",
       "sleep": "5s",
-      "depends_on": ["transform-cleanse", "build-vector-index"]
+      "depends_on": ["cleanse-records", "embed-vectors"]
     },
     {
-      "name": "await-steward-signoff",
+      "name": "await-review",
       "wait_for_signal": "steward-approval",
-      "depends_on": ["cooldown-window"]
+      "depends_on": ["cooldown"]
     },
     {
-      "name": "publish-iceberg-table",
+      "name": "commit-snapshot",
       "activity": "iceberg.commit_snapshot",
-      "depends_on": ["await-steward-signoff"],
+      "depends_on": ["await-review"],
       "when": {
-        "source": "await-steward-signoff",
+        "source": "await-review",
         "field": "approved",
         "op": "eq",
         "value": true
@@ -530,16 +493,14 @@ go run ./examples/mlrelease</code></pre>
 }</code></pre>
         </div>
 
-        <h3 id="fork-join">Fork-Join DAG Parallelism (<code>depends_on</code>)</h3>
+        <h3 id="fork-join">Fork-Join DAGs (<code>depends_on</code>)</h3>
         <p>
-          Any step with an empty <code>depends_on</code> array starts immediately when the workflow begins.
-          Steps that share the same upstream dependency run concurrently (<strong>fan-out</strong>), and a step listing multiple dependencies in <code>depends_on</code> waits until all of them reach <code>COMPLETED</code> or <code>SKIPPED</code> (<strong>fan-in / join</strong>).
-          Cycle detection is enforced at registration time via topological validation.
+          Steps with no <code>depends_on</code> entries start as soon as the workflow starts. Multiple steps depending on the same parent run in parallel, and a step listing multiple dependencies waits until all listed dependencies reach <code>COMPLETED</code> or <code>SKIPPED</code>. Dependency cycles are rejected when the definition is registered.
         </p>
 
-        <h3 id="conditions">Conditional Branching (<code>when</code> Predicates)</h3>
+        <h3 id="conditions">Conditional Branching (<code>when</code>)</h3>
         <p>
-          Before dispatching a step whose dependencies are satisfied, the Raft FSM evaluates its optional <code>when</code> predicate. If it evaluates to <code>false</code>, the step immediately transitions to <code>SKIPPED</code> without dispatching a worker task.
+          When all dependencies of a step are satisfied, the FSM evaluates its optional <code>when</code> condition. If false, the step is marked <code>SKIPPED</code> without dispatching a task.
         </p>
         <div class="doc-table-wrap">
           <table class="doc-table">
@@ -554,140 +515,126 @@ go run ./examples/mlrelease</code></pre>
               <tr>
                 <td><code>source</code></td>
                 <td><code>"input"</code> (default), <code>"metadata"</code>, or <code>"&lt;step-name&gt;"</code></td>
-                <td>Selects the workflow input JSON, workflow metadata map, or a completed upstream step's output JSON.</td>
+                <td>Selects the workflow input JSON, workflow metadata map, or a completed dependency step's output JSON.</td>
               </tr>
               <tr>
                 <td><code>field</code></td>
-                <td>Dot-path (e.g. <code>"metrics.accuracy"</code>) or <code>"$status"</code></td>
-                <td>Extracts nested JSON fields or inspects an upstream step's terminal status (<code>"COMPLETED"</code> vs <code>"SKIPPED"</code>).</td>
+                <td>Dot-separated JSON path (e.g. <code>"metrics.f1"</code>) or <code>"$status"</code></td>
+                <td>Extracts a nested field, or checks whether the dependency finished as <code>"COMPLETED"</code> or <code>"SKIPPED"</code>.</td>
               </tr>
               <tr>
                 <td><code>op</code></td>
                 <td><code>eq</code>, <code>ne</code>, <code>gt</code>, <code>gte</code>, <code>lt</code>, <code>lte</code>, <code>in</code>, <code>exists</code>, <code>not_exists</code></td>
-                <td>Comparison operator applied against <code>value</code>.</td>
+                <td>Comparison operator evaluated against <code>value</code>.</td>
               </tr>
             </tbody>
           </table>
         </div>
 
-        <h3 id="sagas">Automatic LIFO Saga Compensation</h3>
+        <h3 id="sagas">LIFO Saga Compensation</h3>
         <p>
-          When any step exhausts its retry policy (or fails with a non-retryable error code), the workflow transitions to <code>COMPENSATING</code>.
-          Plexus-Flow walks all previously <code>COMPLETED</code> steps in <strong>reverse topological order (LIFO)</strong> and dispatches their <code>compensating_action</code> activities with full retry protection until every completed step reaches <code>ROLLED_BACK</code> and the workflow reaches <code>COMPENSATED</code>.
+          If a step fails after exhausting its retry policy, the workflow transitions to <code>COMPENSATING</code>. Any previously completed steps that define a <code>compensating_action</code> are executed in reverse topological order until they reach <code>ROLLED_BACK</code> and the workflow reaches <code>COMPENSATED</code>.
         </p>
 
-        <h3 id="timers-signals">Durable Timers (<code>sleep</code>) &amp; Human-in-the-Loop Gates (<code>wait_for_signal</code>)</h3>
+        <h3 id="timers-signals">Durable Timers (<code>sleep</code>) &amp; Signal Gates (<code>wait_for_signal</code>)</h3>
         <ul>
-          <li><strong>Durable Sleep Timers</strong>: Setting <code>"sleep": "15m"</code> persists a deterministic <code>WakeAt</code> timestamp in the Raft FSM. Even if the entire cluster restarts during the sleep window, the step completes as soon as wall-clock time passes <code>WakeAt</code>.</li>
-          <li><strong>Durable Signal Gates</strong>: Setting <code>"wait_for_signal": "approval"</code> pauses the branch in <code>WAITING_SIGNAL</code> (consuming zero worker threads). When <code>POST /api/v1/workflows/{id}/signal</code> arrives (even if buffered before the step was reached!), the signal payload becomes that step's <code>Output</code> JSON.</li>
+          <li><strong>Sleep Timers</strong>: Setting <code>"sleep": "10m"</code> records a deterministic <code>WakeAt</code> timestamp in the Raft FSM. The timer survives node restarts and completes once the cluster clock passes <code>WakeAt</code>.</li>
+          <li><strong>Signal Gates</strong>: Setting <code>"wait_for_signal": "steward-approval"</code> places the step in <code>WAITING_SIGNAL</code>. When a signal arrives via <code>POST /api/v1/workflows/{id}/signal</code>, its JSON payload becomes the step's output. Signals sent early are buffered in the workflow state.</li>
         </ul>
 
         <h3 id="cron-schedules">Durable Cron Schedules</h3>
         <p>
-          Register recurring pipelines directly in Raft with 5-field cron expressions, IANA timezones, and overlap protection (<code>SKIP</code>, <code>ALLOW</code>, or <code>CANCEL_PREVIOUS</code>):
+          Schedules are stored in the Raft FSM and support standard 5-field cron expressions, IANA timezones, and overlap policies (<code>SKIP</code>, <code>ALLOW</code>, or <code>CANCEL_PREVIOUS</code>):
         </p>
         <div class="code-block">
-          <div class="code-header"><span>bash — Create a Durable Cron Schedule</span><button class="copy-code-btn" onclick="copyPre(this)">Copy</button></div>
-          <pre><code>curl -X POST http://localhost:8080/api/v1/schedules \
+          <div class="code-header"><span>bash</span><button class="copy-code-btn" onclick="copyPre(this)">Copy</button></div>
+          <pre><code class="language-bash">curl -X POST http://localhost:8080/api/v1/schedules \
   -H "Content-Type: application/json" \
   -d '{
-    "id": "hourly-lakehouse-compaction",
-    "workflow_name": "data-lake-ingestion-pipeline",
+    "id": "hourly-compaction",
+    "workflow_name": "data-ingestion-pipeline",
     "cron": "0 * * * *",
     "timezone": "UTC",
     "overlap_policy": "SKIP",
     "input": {"enable_embeddings": true},
-    "metadata": {"env": "prod", "tier": "batch"}
+    "metadata": {"env": "prod"}
   }'</code></pre>
         </div>
       </section>
 
-      <!-- 3. Building Data-Heavy Pipelines -->
+      <!-- 3. Data Pipelines -->
       <section class="doc-section" id="data-pipelines">
-        <h2>Building Data-Pipeline-Heavy Platforms</h2>
-        <p>
-          Plexus-Flow includes first-class primitives designed specifically for long-running ETL jobs, distributed batch ingestion, and multi-stage ML training pipelines.
-        </p>
+        <h2>Data Pipeline Patterns</h2>
 
-        <h3>1. Stateful Progress Checkpointing (<code>HeartbeatWithProgress</code> &amp; <code>LastProgress</code>)</h3>
+        <h3>1. Progress Checkpointing (<code>HeartbeatWithProgress</code> &amp; <code>LastProgress</code>)</h3>
         <p>
-          Long-running data activities can attach an arbitrary JSON checkpoint payload to every heartbeat.
-          Plexus-Flow replicates this payload into the Raft FSM (`StepState.LastProgress`). If the worker crashes, loses its lease, or the Raft leader fails over, the newly dispatched attempt receives `LastProgress` so it can resume from the exact batch offset or training epoch.
+          Long-running activities can include a JSON progress payload when sending heartbeats. The payload is persisted on the step state in Raft (`StepState.LastProgress`). If a worker disconnects or a leader fails over, the retried task receives `LastProgress` so it can continue from the last checkpoint.
         </p>
         <div class="code-block">
-          <div class="code-header"><span>python — Resumable Batch Processing with Checkpoints</span><button class="copy-code-btn" onclick="copyPre(this)">Copy</button></div>
-          <pre><code>@worker.activity("backfill-snowflake-partition")
+          <div class="code-header"><span>python</span><button class="copy-code-btn" onclick="copyPre(this)">Copy</button></div>
+          <pre><code class="language-python">@worker.activity("backfill-partition")
 def backfill_partition(ctx: ActivityContext, job: dict) -> dict:
-    # 1. Inspect replicated checkpoint from any prior interrupted attempt
-    state = ctx.last_progress or {"cursor_offset": 0, "processed_rows": 0}
-    offset = state["cursor_offset"]
-    total = state["processed_rows"]
+    state = ctx.last_progress or {"offset": 0, "rows": 0}
+    offset = state["offset"]
+    rows = state["rows"]
 
     while offset &lt; job["total_rows"]:
-        batch = fetch_rows(job["table"], offset=offset, limit=50_000)
-        write_to_warehouse(batch)
+        batch = read_rows(job["table"], offset=offset, limit=50_000)
+        write_rows(batch)
         offset += len(batch)
-        total += len(batch)
+        rows += len(batch)
+        ctx.heartbeat_progress({"offset": offset, "rows": rows})
 
-        # 2. Renew worker lease AND commit progress checkpoint to Raft FSM
-        ctx.heartbeat_progress({"cursor_offset": offset, "processed_rows": total})
-
-    return {"status": "done", "rows_committed": total}</code></pre>
+    return {"rows_written": rows}</code></pre>
         </div>
 
-        <h3 id="time-travel-replay">2. Time-Travel Step Replay (<code>/replay</code>)</h3>
+        <h3 id="time-travel-replay">2. Targeted Step Replay (<code>/replay</code>)</h3>
         <p>
-          In data-heavy pipelines, early stages (like extracting 500 GB from S3 or running an LLM embedding pass) are expensive, while downstream stages (like SQL transformations or schema formatting) may fail due to a code bug.
-          Once you deploy the bug fix to your workers, call <strong>Replay</strong> on the failed step:
+          When a downstream step fails after expensive upstream steps have already completed, you can reset only the failed step (and its transitive dependents) back to <code>PENDING</code> while preserving upstream outputs:
         </p>
         <div class="code-block">
-          <div class="code-header"><span>bash — Rewind a Failed Step &amp; Its Downstream Dependents</span><button class="copy-code-btn" onclick="copyPre(this)">Copy</button></div>
-          <pre><code>curl -X POST http://localhost:8080/api/v1/workflows/etl-run-2026-10/replay \
+          <div class="code-header"><span>bash</span><button class="copy-code-btn" onclick="copyPre(this)">Copy</button></div>
+          <pre><code class="language-bash">curl -X POST http://localhost:8080/api/v1/workflows/etl-run-101/replay \
   -H "Content-Type: application/json" \
-  -d '{"step": "transform-cleanse"}'</code></pre>
-        </div>
-        <div class="callout tip">
-          <strong>How Time-Travel Replay Works:</strong> Plexus-Flow resets <code>transform-cleanse</code> and all of its transitive downstream dependents back to <code>PENDING</code> (clearing their stale errors/outputs), keeps all upstream steps (e.g. <code>extract-raw-events</code>) <code>COMPLETED</code> with their cached outputs, transitions the workflow back to <code>RUNNING</code>, and immediately dispatches <code>transform-cleanse</code>.
+  -d '{"step": "cleanse-records"}'</code></pre>
         </div>
 
-        <h3 id="retries-errors">3. Selective Retries &amp; Non-Retryable Error Codes</h3>
+        <h3 id="retries-errors">3. Selective Retries &amp; Error Codes</h3>
         <p>
-          Transient network glitches should retry with exponential backoff, whereas deterministic data errors (e.g., <code>ERR_INVALID_SCHEMA</code>) should fail fast.
-          List terminal error codes in <code>retry_policy.non_retryable_errors</code> and raise a coded error from Go or Python:
+          Steps can configure <code>max_attempts</code>, initial <code>backoff</code> (exponentially doubled per attempt), and <code>non_retryable_errors</code>. If an activity returns a matching error code, retries are skipped immediately:
         </p>
         <div class="code-block">
-          <div class="code-header"><span>go &amp; python — Raising Non-Retryable Error Codes</span><button class="copy-code-btn" onclick="copyPre(this)">Copy</button></div>
-          <pre><code>// Go Worker:
-return MyOutput{}, worker.NewCodedError("ERR_INVALID_SCHEMA", fmt.Errorf("missing column: user_id"))
-
-# Python Worker:
+          <div class="code-header"><span>go</span><button class="copy-code-btn" onclick="copyPre(this)">Copy</button></div>
+          <pre><code class="language-go">// Return a non-retryable coded error in Go:
+return Output{}, worker.NewCodedError("ERR_CORRUPT_SCHEMA", errors.New("missing column: timestamp"))</code></pre>
+        </div>
+        <div class="code-block">
+          <div class="code-header"><span>python</span><button class="copy-code-btn" onclick="copyPre(this)">Copy</button></div>
+          <pre><code class="language-python"># Raise a non-retryable coded error in Python:
 from plexus_flow import ActivityError
-raise ActivityError("missing column: user_id", code="ERR_INVALID_SCHEMA")</code></pre>
+raise ActivityError("missing column: timestamp", code="ERR_CORRUPT_SCHEMA")</code></pre>
         </div>
 
-        <h3 id="faceted-search">4. Zero-CDC Sub-Millisecond Faceted Search</h3>
+        <h3 id="faceted-search">4. Faceted Search</h3>
         <p>
-          Every workflow can carry arbitrary <code>metadata</code> key-value tags (`map[string]string`).
-          Plexus-Flow maintains an in-memory inverted index inside `FlowStore` that updates atomically with every Raft transition—giving you sub-millisecond multi-attribute queries without Elasticsearch:
+          Workflows can be queried by status, definition name, and arbitrary <code>metadata</code> key-value pairs via the embedded inverted index:
         </p>
         <div class="code-block">
-          <div class="code-header"><span>bash — Multi-Attribute Faceted Search</span><button class="copy-code-btn" onclick="copyPre(this)">Copy</button></div>
-          <pre><code># Find all FAILED workflows for tenant=acme in region=eu-west-1
-curl "http://localhost:8080/api/v1/workflows?status=FAILED&amp;name=data-lake-ingestion-pipeline&amp;meta.tenant=acme&amp;meta.region=eu-west-1&amp;limit=50"</code></pre>
+          <div class="code-header"><span>bash</span><button class="copy-code-btn" onclick="copyPre(this)">Copy</button></div>
+          <pre><code class="language-bash">curl "http://localhost:8080/api/v1/workflows?status=FAILED&amp;name=data-ingestion-pipeline&amp;meta.env=prod&amp;limit=50"</code></pre>
         </div>
       </section>
 
       <!-- 4. Go SDK -->
       <section class="doc-section" id="go-sdk">
-        <h2>Go SDK &amp; Embedded Engine Reference</h2>
+        <h2>Go SDK Reference</h2>
         <p>
-          Plexus-Flow can be used either as a standalone cluster connected via gRPC workers (`pkg/workerclient`) or embedded directly inside your Go services (`pkg/graphflow`).
+          Use <code>worker.RegisterTyped</code> to register strongly typed activity handlers, and <code>workerclient.New</code> to connect to a single server or a multi-node cluster.
         </p>
 
-        <h3>Type-Safe Generic Workers &amp; Multi-Node Failover</h3>
         <div class="code-block">
-          <div class="code-header"><span>go — Typed Worker Registration &amp; Cluster Failover</span><button class="copy-code-btn" onclick="copyPre(this)">Copy</button></div>
-          <pre><code>package main
+          <div class="code-header"><span>go</span><button class="copy-code-btn" onclick="copyPre(this)">Copy</button></div>
+          <pre><code class="language-go">package main
 
 import (
     "context"
@@ -696,110 +643,96 @@ import (
     "github.com/avivklas/plexus-flow/pkg/workerclient"
 )
 
-type TransformInput struct {
-    DatasetURI string \`json:"dataset_uri"\`
-    BatchSize  int    \`json:"batch_size"\`
+type CleanseInput struct {
+    DatasetURI string `json:"dataset_uri"`
 }
 
-type TransformOutput struct {
-    RowsWritten int    \`json:"rows_written"\`
-    TableURI    string \`json:"table_uri"\`
+type CleanseOutput struct {
+    RowsWritten int    `json:"rows_written"`
+    OutputURI   string `json:"output_uri"`
 }
 
 func main() {
     reg := worker.NewRegistry()
 
-    worker.RegisterTyped(reg, "spark.cleanse", func(ctx context.Context, in TransformInput) (TransformOutput, error) {
-        // Read previous checkpoint if resuming after a crash
-        lastCheckpoint := worker.LastProgressFromContext(ctx)
-        _ = lastCheckpoint
+    worker.RegisterTyped(reg, "spark.cleanse", func(ctx context.Context, in CleanseInput) (CleanseOutput, error) {
+        last := worker.LastProgressFromContext(ctx)
+        _ = last
 
-        // Stream live progress back to Raft
-        reportProgress := worker.ProgressFromContext(ctx)
-        _ = reportProgress([]byte(\`{"stage": "deduplicating", "pct": 75}\`))
+        report := worker.ProgressFromContext(ctx)
+        _ = report([]byte(`{"pct": 50}`))
 
-        return TransformOutput{
-            RowsWritten: 250000,
-            TableURI:    "s3://curated/clean.parquet",
+        return CleanseOutput{
+            RowsWritten: 100000,
+            OutputURI:   "s3://curated/clean.parquet",
         }, nil
     })
 
-    // Pass comma-separated cluster addresses (or Options.Addresses) for automatic leader discovery &amp; failover
-    client := workerclient.New("10.0.0.1:9090,10.0.0.2:9090,10.0.0.3:9090", reg, workerclient.Options{
-        WorkerID:    "go-etl-worker-01",
+    // Comma-separated addresses enable automatic failover if the current leader stops
+    w := workerclient.New("10.0.0.1:9090,10.0.0.2:9090,10.0.0.3:9090", reg, workerclient.Options{
+        WorkerID:    "go-worker-1",
         Concurrency: 16,
     })
 
-    if err := client.Run(context.Background()); err != nil {
+    if err := w.Run(context.Background()); err != nil {
         log.Fatal(err)
     }
 }</code></pre>
         </div>
-
-        <h3>Horizontal Partitioning with <code>ShardedCoordinator</code></h3>
-        <p>
-          For ultra-high-throughput in-process workloads, <code>graphflow.ShardedCoordinator</code> partitions workflows across <code>N</code> independent Dual-Raft shard pairs using deterministic FNV-1a hashing (`shard = fnv1a(workflowID) % numShards`), scaling write throughput linearly while aggregating search and SSE streams across all shards.
-        </p>
       </section>
 
       <!-- 5. Python SDK -->
       <section class="doc-section" id="python-sdk">
-        <h2>Python Worker &amp; Client SDK Reference</h2>
-        <p>Install the Python SDK from the repository (`pip install -e sdk/python`):</p>
+        <h2>Python SDK Reference</h2>
+        <p>Install the package from <code>sdk/python</code> (<code>pip install -e sdk/python</code>):</p>
 
         <div class="code-block">
-          <div class="code-header"><span>python — Full Worker &amp; WorkflowClient Usage</span><button class="copy-code-btn" onclick="copyPre(this)">Copy</button></div>
-          <pre><code>from plexus_flow import Worker, ActivityContext, ActivityError, WorkflowClient
+          <div class="code-header"><span>python</span><button class="copy-code-btn" onclick="copyPre(this)">Copy</button></div>
+          <pre><code class="language-python">from plexus_flow import Worker, ActivityContext, ActivityError, WorkflowClient
 
-# 1. Define Activities on a gRPC Worker
-worker = Worker("localhost:9090", worker_id="py-ml-worker", concurrency=4)
+worker = Worker("localhost:9090", worker_id="py-worker-1", concurrency=4)
 
 @worker.activity("gpu.embed_chunks")
-def embed_chunks(ctx: ActivityContext, payload: dict) -&gt; dict:
-    if not payload.get("dataset_uri"):
+def embed_chunks(ctx: ActivityContext, payload: dict) -> dict:
+    if "dataset_uri" not in payload:
         raise ActivityError("dataset_uri is required", code="ERR_INVALID_INPUT")
 
-    ctx.heartbeat_progress({"batches_completed": 5, "total_batches": 10})
-    return {"vector_count": 128_000, "dimension": 1536}
+    ctx.heartbeat_progress({"completed_batches": 5})
+    return {"vectors": 50000}
 
-# Run worker in background thread or main process:
-# worker.run()
-
-# 2. Orchestrate Workflows via HTTP/SSE Client
+# Start a workflow and stream updates over SSE:
 client = WorkflowClient("http://localhost:8080")
-
 wf = client.start_workflow(
-    "data-lake-ingestion-pipeline",
+    "data-ingestion-pipeline",
     {"dataset_uri": "s3://raw/events.parquet", "enable_embeddings": True},
-    workflow_id="ingest-job-42",
-    metadata={"tenant": "acme", "pipeline": "embeddings"}
+    workflow_id="ingest-42",
+    metadata={"tenant": "acme"}
 )
 
-# Stream real-time state updates over Server-Sent Events (SSE)
-for snapshot in client.watch("ingest-job-42", timeout=60.0):
-    print("Status:", snapshot["status"])
-    if snapshot["status"] in ("COMPLETED", "FAILED", "COMPENSATED"):
+for state in client.watch("ingest-42", timeout=60.0):
+    if state["status"] in ("COMPLETED", "FAILED", "COMPENSATED"):
+        print("Terminal status:", state["status"])
         break</code></pre>
         </div>
       </section>
 
-      <!-- 6. REST & SSE API Reference -->
+      <!-- 6. HTTP & SSE API Reference -->
       <section class="doc-section" id="api-reference">
-        <h2>HTTP REST &amp; Real-Time SSE API Reference</h2>
-        <p>Every node exposes the full HTTP API. Follower nodes transparently proxy mutating requests (`POST`, `DELETE`) to the active Raft leader.</p>
+        <h2>HTTP &amp; SSE API Reference</h2>
+        <p>Mutating requests sent to a follower node are forwarded to the current Raft leader.</p>
 
         <div class="doc-table-wrap">
           <table class="doc-table">
             <thead>
               <tr>
-                <th>Method &amp; Path</th>
+                <th>Endpoint</th>
                 <th>Description</th>
               </tr>
             </thead>
             <tbody>
               <tr>
                 <td><code>POST /api/v1/definitions</code></td>
-                <td>Register or update a declarative <code>WorkflowDefinition</code> JSON schema.</td>
+                <td>Register or update a workflow definition.</td>
               </tr>
               <tr>
                 <td><code>GET /api/v1/definitions</code></td>
@@ -807,81 +740,76 @@ for snapshot in client.watch("ingest-job-42", timeout=60.0):
               </tr>
               <tr>
                 <td><code>POST /api/v1/workflows</code></td>
-                <td>Start a new workflow execution (accepts <code>id</code>, <code>workflow_name</code>, <code>input</code>, <code>metadata</code>).</td>
+                <td>Start a workflow instance (<code>id</code>, <code>workflow_name</code>, <code>input</code>, <code>metadata</code>).</td>
               </tr>
               <tr>
                 <td><code>GET /api/v1/workflows</code></td>
-                <td>Search &amp; paginate workflows (`?status=RUNNING&amp;name=...&amp;meta.key=val&amp;offset=0&amp;limit=50`).</td>
+                <td>Search workflows (<code>?status=...&amp;name=...&amp;meta.key=val&amp;offset=0&amp;limit=50</code>).</td>
               </tr>
               <tr>
                 <td><code>GET /api/v1/workflows/{id}</code></td>
-                <td>Inspect a workflow instance, including per-step status, outputs, attempts, and `last_progress` checkpoints (transparently falls back to `ColdArchive` if compacted).</td>
+                <td>Get workflow instance details (falls back to cold archive if compacted).</td>
               </tr>
               <tr>
                 <td><code>POST /api/v1/workflows/{id}/signal</code></td>
-                <td>Deliver a named external signal (`{"signal": "...", "payload": {...}}`) to a waiting workflow.</td>
+                <td>Send a named signal (<code>{"signal": "...", "payload": {...}}</code>) to a workflow.</td>
               </tr>
               <tr>
                 <td><code>POST /api/v1/workflows/{id}/replay</code></td>
-                <td><strong>Time-Travel Replay:</strong> Rewind a failed step (`{"step": "..."}`) and its downstream dependents while keeping upstream outputs intact.</td>
+                <td>Reset a failed step (<code>{"step": "..."}</code>) and its downstream dependents to <code>PENDING</code>.</td>
               </tr>
               <tr>
                 <td><code>POST /api/v1/workflows/{id}/cancel</code></td>
-                <td>Cancel an active workflow execution.</td>
+                <td>Cancel a running workflow.</td>
               </tr>
               <tr>
                 <td><code>GET /api/v1/workflows/{id}/events</code></td>
-                <td>Subscribe to a real-time Server-Sent Events (`text/event-stream`) stream for a specific workflow.</td>
+                <td>Server-Sent Events stream for a single workflow instance.</td>
               </tr>
               <tr>
                 <td><code>GET /api/v1/events</code></td>
-                <td>Subscribe to the global Server-Sent Events firehose for all workflow transitions.</td>
+                <td>Server-Sent Events stream for all workflow transitions.</td>
               </tr>
               <tr>
                 <td><code>POST /api/v1/schedules</code></td>
-                <td>Create or update a durable cron schedule (`id`, `workflow_name`, `cron`, `timezone`, `overlap_policy`).</td>
-              </tr>
-              <tr>
-                <td><code>POST /api/v1/schedules/{id}/pause</code></td>
-                <td>Pause a cron schedule (`/resume` to resume, `DELETE /api/v1/schedules/{id}` to delete).</td>
+                <td>Create or update a cron schedule.</td>
               </tr>
               <tr>
                 <td><code>GET /api/v1/cluster/status</code></td>
-                <td>Inspect Raft leadership (`is_leader`, `leader_id`, `leader_addr`), connected gRPC workers, and in-flight leases.</td>
+                <td>Return Raft leadership status, connected workers, and active leases.</td>
               </tr>
               <tr>
                 <td><code>POST /api/v1/admin/compact</code></td>
-                <td>Manually trigger retention compaction (`{"older_than": "24h", "max_keep": 10000}`).</td>
+                <td>Compact terminal workflows older than a specified duration.</td>
               </tr>
               <tr>
                 <td><code>GET /healthz</code> &amp; <code>GET /readyz</code></td>
-                <td>Kubernetes liveness (`200 OK`) and readiness (`200 OK` when Raft quorum has an elected leader) probes.</td>
+                <td>Liveness and Raft quorum readiness endpoints.</td>
               </tr>
             </tbody>
           </table>
         </div>
       </section>
 
-      <!-- 7. Production Clustering & Operations -->
+      <!-- 7. Clustering & Operations -->
       <section class="doc-section" id="clustering">
-        <h2>Production Multi-Node Raft Clustering</h2>
+        <h2>Multi-Node Raft Cluster Setup</h2>
         <p>
-          Deploying a fault-tolerant 3-node (or 5-node) cluster requires zero external coordination services.
-          Boot `node-1` as the initial cluster leader, and point `node-2` and `node-3` at `node-1` via `--join` and `--act-join`:
+          To run a 3-node cluster, start <code>node-1</code> as the bootstrap node and join <code>node-2</code> and <code>node-3</code> using <code>--join</code> (for <code>FlowStore</code>) and <code>--act-join</code> (for <code>ActivityStore</code>):
         </p>
 
         <div class="code-block">
-          <div class="code-header"><span>bash — Booting a 3-Node Fault-Tolerant Cluster</span><button class="copy-code-btn" onclick="copyPre(this)">Copy</button></div>
-          <pre><code># Node 1 (Bootstrap Leader)
+          <div class="code-header"><span>bash</span><button class="copy-code-btn" onclick="copyPre(this)">Copy</button></div>
+          <pre><code class="language-bash"># Node 1 (bootstrap)
 plexus-flow \
   --id node-1 \
   --http-addr 0.0.0.0:8081 \
   --grpc-addr 0.0.0.0:9091 \
   --raft-addr 127.0.0.1:7001 \
   --act-raft-addr 127.0.0.1:7002 \
-  --data-dir /var/lib/plexus-flow/node-1
+  --data-dir ./data/node-1
 
-# Node 2 (Voter — auto-joins Node 1)
+# Node 2 (joins Node 1)
 plexus-flow \
   --id node-2 \
   --http-addr 0.0.0.0:8082 \
@@ -890,9 +818,9 @@ plexus-flow \
   --act-raft-addr 127.0.0.1:7004 \
   --join 127.0.0.1:7001 \
   --act-join 127.0.0.1:7002 \
-  --data-dir /var/lib/plexus-flow/node-2
+  --data-dir ./data/node-2
 
-# Node 3 (Voter — auto-joins Node 1)
+# Node 3 (joins Node 1)
 plexus-flow \
   --id node-3 \
   --http-addr 0.0.0.0:8083 \
@@ -901,17 +829,15 @@ plexus-flow \
   --act-raft-addr 127.0.0.1:7006 \
   --join 127.0.0.1:7001 \
   --act-join 127.0.0.1:7002 \
-  --data-dir /var/lib/plexus-flow/node-3</code></pre>
+  --data-dir ./data/node-3</code></pre>
         </div>
 
         <h3 id="cli-flags">CLI Flags &amp; Environment Variables</h3>
-        <p>Every CLI flag has a corresponding `PLEXUS_FLOW_*` environment variable for 12-factor container and Kubernetes StatefulSet deployments:</p>
-
         <div class="doc-table-wrap">
           <table class="doc-table">
             <thead>
               <tr>
-                <th>CLI Flag</th>
+                <th>Flag</th>
                 <th>Environment Variable</th>
                 <th>Default</th>
                 <th>Description</th>
@@ -922,94 +848,93 @@ plexus-flow \
                 <td><code>--id</code></td>
                 <td><code>PLEXUS_FLOW_NODE_ID</code></td>
                 <td><code>node-1</code></td>
-                <td>Unique node identifier in the Raft cluster.</td>
+                <td>Unique node ID.</td>
               </tr>
               <tr>
                 <td><code>--http-addr</code></td>
                 <td><code>PLEXUS_FLOW_HTTP_ADDR</code></td>
                 <td><code>:8080</code></td>
-                <td>HTTP REST API, SSE stream, and Web Dashboard listen address.</td>
+                <td>HTTP API and web UI listen address.</td>
               </tr>
               <tr>
                 <td><code>--grpc-addr</code></td>
                 <td><code>PLEXUS_FLOW_GRPC_ADDR</code></td>
                 <td><code>:9090</code></td>
-                <td>gRPC Remote Worker Broker listen address.</td>
+                <td>gRPC worker broker listen address.</td>
               </tr>
               <tr>
                 <td><code>--raft-addr</code></td>
                 <td><code>PLEXUS_FLOW_RAFT_ADDR</code></td>
                 <td><code>127.0.0.1:7001</code></td>
-                <td>Bind address for the Upstream (`FlowStore`) Raft consensus transport.</td>
+                <td>Upstream (<code>FlowStore</code>) Raft bind address.</td>
               </tr>
               <tr>
                 <td><code>--act-raft-addr</code></td>
                 <td><code>PLEXUS_FLOW_ACT_RAFT_ADDR</code></td>
                 <td><code>127.0.0.1:7002</code></td>
-                <td>Bind address for the Downstream (`ActivityStore`) Raft consensus transport.</td>
+                <td>Downstream (<code>ActivityStore</code>) Raft bind address.</td>
               </tr>
               <tr>
                 <td><code>--advertise-raft-addr</code></td>
                 <td><code>PLEXUS_FLOW_ADVERTISE_RAFT_ADDR</code></td>
-                <td>(same as `--raft-addr`)</td>
-                <td>Routable address advertised to peers for `FlowStore` Raft (e.g. Pod DNS in Kubernetes).</td>
+                <td>(same as <code>--raft-addr</code>)</td>
+                <td>Advertised address for <code>FlowStore</code> Raft peers.</td>
               </tr>
               <tr>
                 <td><code>--advertise-act-raft-addr</code></td>
                 <td><code>PLEXUS_FLOW_ADVERTISE_ACT_RAFT_ADDR</code></td>
-                <td>(same as `--act-raft-addr`)</td>
-                <td>Routable address advertised to peers for `ActivityStore` Raft.</td>
+                <td>(same as <code>--act-raft-addr</code>)</td>
+                <td>Advertised address for <code>ActivityStore</code> Raft peers.</td>
               </tr>
               <tr>
                 <td><code>--join</code> / <code>--act-join</code></td>
                 <td><code>PLEXUS_FLOW_JOIN</code> / <code>PLEXUS_FLOW_ACT_JOIN</code></td>
                 <td><code>""</code></td>
-                <td>Leader Raft addresses to join when adding a voter node to an existing cluster.</td>
+                <td>Existing cluster addresses to join as a voter.</td>
               </tr>
               <tr>
                 <td><code>--data-dir</code></td>
                 <td><code>PLEXUS_FLOW_DATA_DIR</code></td>
                 <td><code>./data</code></td>
-                <td>Directory for persistent BoltDB Raft logs and FSM snapshots.</td>
+                <td>Directory for BoltDB Raft logs and snapshots.</td>
               </tr>
               <tr>
                 <td><code>--flows</code></td>
                 <td><code>PLEXUS_FLOW_FLOWS</code></td>
                 <td><code>""</code></td>
-                <td>Comma-separated paths or globs of declarative JSON workflow definitions to register at startup.</td>
+                <td>Comma-separated paths/globs of JSON workflow definitions to load on startup.</td>
               </tr>
               <tr>
                 <td><code>--retention-ttl</code></td>
                 <td><code>PLEXUS_FLOW_RETENTION_TTL</code></td>
-                <td><code>0</code> (disabled)</td>
-                <td>Automatically compact terminal workflows older than this duration (e.g. `168h`).</td>
+                <td><code>0</code></td>
+                <td>TTL after which terminal workflows are compacted.</td>
               </tr>
               <tr>
                 <td><code>--max-completed-workflows</code></td>
                 <td><code>PLEXUS_FLOW_MAX_COMPLETED_WORKFLOWS</code></td>
-                <td><code>0</code> (unlimited)</td>
-                <td>Cap total terminal workflows retained in hot Raft memory.</td>
+                <td><code>0</code></td>
+                <td>Maximum completed workflows kept in hot memory.</td>
               </tr>
             </tbody>
           </table>
         </div>
 
-        <h3 id="retention-cold-storage">Tiered Storage &amp; Cold Archival (<code>ColdArchive</code>)</h3>
+        <h3 id="retention-cold-storage">Retention &amp; Cold Archival</h3>
         <p>
-          To keep hot Raft memory bounded indefinitely while preserving historical audit trails, configure `--retention-ttl` (or `CoordinatorConfig.ColdArchive`).
-          Before `CompactWorkflows` purges terminal workflows from the Raft FSM, it archives them to your `ColdArchive` backend (such as `flowstore.MemoryArchive`, SQLite, S3, or object storage), and `GetWorkflow` transparently falls back to cold storage on a hot-cache miss.
+          Configuring <code>--retention-ttl</code> or <code>--max-completed-workflows</code> runs a periodic compaction loop that removes older terminal workflows from the in-memory Raft FSM. When a <code>ColdArchive</code> implementation is configured on the coordinator, compacted workflows are archived prior to deletion and transparently fetched on <code>GET /api/v1/workflows/{id}</code>.
         </p>
 
-        <h3 id="battle-tests">Running the Cluster &amp; Concurrency Battle-Test Suite</h3>
-        <p>
-          Verify multi-node Raft quorum elections, mid-flight leader kills with progress checkpoint failover, Saga rollback recovery, worker chaos disconnect storms, and 4-shard concurrency under the Go race detector:
-        </p>
+        <h3 id="battle-tests">Running the Test Suite</h3>
         <div class="code-block">
-          <div class="code-header"><span>bash — Execute Full Battle-Test Suite</span><button class="copy-code-btn" onclick="copyPre(this)">Copy</button></div>
-          <pre><code>go test -v -race -run TestBattle ./test</code></pre>
+          <div class="code-header"><span>bash</span><button class="copy-code-btn" onclick="copyPre(this)">Copy</button></div>
+          <pre><code class="language-bash"># Run all unit and integration tests with the race detector
+go test -race ./...
+
+# Run the cluster failover and concurrency tests
+go test -v -race -run TestBattle ./test</code></pre>
         </div>
       </section>
-
     </main>
   </div>
 
@@ -1017,21 +942,23 @@ plexus-flow \
     function copyPre(btn) {
       const code = btn.closest(".code-block").querySelector("code").textContent;
       navigator.clipboard.writeText(code);
-      const old = btn.textContent;
-      btn.textContent = "Copied!";
-      setTimeout(() => { btn.textContent = old; }, 1500);
+      const prev = btn.textContent;
+      btn.textContent = "Copied";
+      setTimeout(() => { btn.textContent = prev; }, 1200);
     }
 
     function filterDocs(query) {
       const q = query.trim().toLowerCase();
       document.querySelectorAll(".doc-section").forEach(sec => {
-        if (!q || sec.textContent.toLowerCase().includes(q)) {
-          sec.style.display = "";
-        } else {
-          sec.style.display = "none";
-        }
+        sec.style.display = (!q || sec.textContent.toLowerCase().includes(q)) ? "" : "none";
       });
     }
+
+    document.addEventListener("DOMContentLoaded", () => {
+      if (window.hljs) {
+        hljs.highlightAll();
+      }
+    });
   </script>
 </body>
 </html>
