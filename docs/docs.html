@@ -495,8 +495,25 @@ go run ./examples/mlrelease</code></pre>
 
         <h3 id="fork-join">Fork-Join DAGs (<code>depends_on</code>)</h3>
         <p>
-          Steps with no <code>depends_on</code> entries start as soon as the workflow starts. Multiple steps depending on the same parent run in parallel, and a step listing multiple dependencies waits until all listed dependencies reach <code>COMPLETED</code> or <code>SKIPPED</code>. Dependency cycles are rejected when the definition is registered.
+          Steps with no <code>depends_on</code> entries start as soon as the workflow starts. Multiple steps depending on the same parent run in parallel (fan-out), and a step listing multiple dependencies waits until all listed dependencies reach <code>COMPLETED</code> or <code>SKIPPED</code> (fan-in).
+          Every downstream step receives the parsed JSON outputs of its dependencies keyed by step name in <code>ctx.dependency_outputs</code> (Python) or <code>info.DependencyOutputs</code> (Go).
         </p>
+
+        <div class="code-block">
+          <div class="code-header"><span>python — Fan-Out &amp; Fan-In Data Passing</span><button class="copy-code-btn" onclick="copyPre(this)">Copy</button></div>
+          <pre><code class="language-python"># Fan-out step (depends_on: ["extract-parquet"]): reads parent step output
+@worker.activity("spark.cleanse")
+async def cleanse_records(ctx: TaskContext, payload: dict) -> dict:
+    extracted = ctx.dependency_outputs["extract-parquet"]
+    return {"clean_uri": extracted["staging_uri"], "rows": extracted["rows"]}
+
+# Fan-in join step (depends_on: ["cleanse-records", "embed-vectors"]): reads all branch outputs
+@worker.activity("iceberg.commit_snapshot")
+async def commit_snapshot(ctx: TaskContext, payload: dict) -> dict:
+    cleansed = ctx.dependency_outputs["cleanse-records"]
+    embedded = ctx.dependency_outputs.get("embed-vectors")  # None if skipped by a "when" condition
+    return {"table_rows": cleansed["rows"], "has_embeddings": embedded is not None}</code></pre>
+        </div>
 
         <h3 id="conditions">Conditional Branching (<code>when</code>)</h3>
         <p>
@@ -573,7 +590,7 @@ go run ./examples/mlrelease</code></pre>
         <div class="code-block">
           <div class="code-header"><span>python</span><button class="copy-code-btn" onclick="copyPre(this)">Copy</button></div>
           <pre><code class="language-python">@worker.activity("backfill-partition")
-def backfill_partition(ctx: ActivityContext, job: dict) -> dict:
+async def backfill_partition(ctx: TaskContext, job: dict) -> dict:
     state = ctx.last_progress or {"offset": 0, "rows": 0}
     offset = state["offset"]
     rows = state["rows"]
@@ -583,7 +600,7 @@ def backfill_partition(ctx: ActivityContext, job: dict) -> dict:
         write_rows(batch)
         offset += len(batch)
         rows += len(batch)
-        ctx.heartbeat_progress({"offset": offset, "rows": rows})
+        await ctx.report_progress({"offset": offset, "rows": rows})
 
     return {"rows_written": rows}</code></pre>
         </div>
@@ -611,8 +628,8 @@ return Output{}, worker.NewCodedError("ERR_CORRUPT_SCHEMA", errors.New("missing 
         <div class="code-block">
           <div class="code-header"><span>python</span><button class="copy-code-btn" onclick="copyPre(this)">Copy</button></div>
           <pre><code class="language-python"># Raise a non-retryable coded error in Python:
-from plexus_flow import ActivityError
-raise ActivityError("missing column: timestamp", code="ERR_CORRUPT_SCHEMA")</code></pre>
+from plexus_flow import ActivityFailure
+raise ActivityFailure("missing column: timestamp", code="ERR_CORRUPT_SCHEMA", retryable=False)</code></pre>
         </div>
 
         <h3 id="faceted-search">4. Faceted Search</h3>
@@ -629,7 +646,7 @@ raise ActivityError("missing column: timestamp", code="ERR_CORRUPT_SCHEMA")</cod
       <section class="doc-section" id="go-sdk">
         <h2>Go SDK Reference</h2>
         <p>
-          Use <code>worker.RegisterTyped</code> to register strongly typed activity handlers, and <code>workerclient.New</code> to connect to a single server or a multi-node cluster.
+          Use <code>worker.RegisterTyped</code> to register strongly typed activity handlers, <code>workerclient.TaskFromContext</code> to inspect dependency outputs and checkpoints, and <code>workerclient.New</code> to connect to a single server or a multi-node cluster.
         </p>
 
         <div class="code-block">
@@ -638,6 +655,7 @@ raise ActivityError("missing column: timestamp", code="ERR_CORRUPT_SCHEMA")</cod
 
 import (
     "context"
+    "encoding/json"
     "log"
     "github.com/avivklas/plexus-flow/pkg/worker"
     "github.com/avivklas/plexus-flow/pkg/workerclient"
@@ -656,11 +674,11 @@ func main() {
     reg := worker.NewRegistry()
 
     worker.RegisterTyped(reg, "spark.cleanse", func(ctx context.Context, in CleanseInput) (CleanseOutput, error) {
-        last := worker.LastProgressFromContext(ctx)
-        _ = last
+        info, _ := workerclient.TaskFromContext(ctx)
+        _ = info.LastProgress                          // Checkpoint from prior attempt, if any
+        _ = info.DependencyOutputs["extract-parquet"]  // Upstream dependency output JSON
 
-        report := worker.ProgressFromContext(ctx)
-        _ = report([]byte(`{"pct": 50}`))
+        _ = workerclient.ReportProgress(ctx, json.RawMessage(`{"pct": 50}`))
 
         return CleanseOutput{
             RowsWritten: 100000,
@@ -669,9 +687,10 @@ func main() {
     })
 
     // Comma-separated addresses enable automatic failover if the current leader stops
-    w := workerclient.New("10.0.0.1:9090,10.0.0.2:9090,10.0.0.3:9090", reg, workerclient.Options{
-        WorkerID:    "go-worker-1",
-        Concurrency: 16,
+    w := workerclient.New("10.0.0.1:9090,10.0.0.2:9090,10.0.0.3:9090", workerclient.Options{
+        WorkerID:       "go-worker-1",
+        MaxConcurrency: 16,
+        Registry:       reg,
     })
 
     if err := w.Run(context.Background()); err != nil {
@@ -688,16 +707,18 @@ func main() {
 
         <div class="code-block">
           <div class="code-header"><span>python</span><button class="copy-code-btn" onclick="copyPre(this)">Copy</button></div>
-          <pre><code class="language-python">from plexus_flow import Worker, ActivityContext, ActivityError, WorkflowClient
+          <pre><code class="language-python">import asyncio
+from plexus_flow import Worker, TaskContext, ActivityFailure, WorkflowClient
 
-worker = Worker("localhost:9090", worker_id="py-worker-1", concurrency=4)
+worker = Worker("localhost:9090", worker_id="py-worker-1", max_concurrency=4)
 
 @worker.activity("gpu.embed_chunks")
-def embed_chunks(ctx: ActivityContext, payload: dict) -> dict:
+async def embed_chunks(ctx: TaskContext, payload: dict) -> dict:
     if "dataset_uri" not in payload:
-        raise ActivityError("dataset_uri is required", code="ERR_INVALID_INPUT")
+        raise ActivityFailure("dataset_uri is required", code="ERR_INVALID_INPUT", retryable=False)
 
-    ctx.heartbeat_progress({"completed_batches": 5})
+    extracted = ctx.dependency_outputs.get("extract-parquet", {})
+    await ctx.report_progress({"completed_batches": 5, "source": extracted.get("uri")})
     return {"vectors": 50000}
 
 # Start a workflow and stream updates over SSE:

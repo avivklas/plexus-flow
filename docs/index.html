@@ -799,7 +799,7 @@
           <div>
             <h3>1. Progress Checkpointing</h3>
             <p>
-              Workers processing large datasets can attach JSON progress payloads to periodic heartbeats. Checkpoints are replicated via Raft (`LastProgress`), allowing a replacement worker to resume from the last committed offset after a crash.
+              Workers processing large datasets can attach JSON progress payloads to periodic heartbeats. Checkpoints are replicated via Raft (<code>last_progress</code>), allowing a replacement worker to resume from the last committed offset after a crash.
             </p>
           </div>
           <div class="code-box">
@@ -807,7 +807,7 @@
             <pre><code class="language-python">state = ctx.last_progress or {"offset": 0}
 for batch in read_batches(start=state["offset"]):
     process(batch)
-    ctx.heartbeat_progress({"offset": batch.next_offset})</code></pre>
+    await ctx.report_progress({"offset": batch.next_offset})</code></pre>
           </div>
         </div>
 
@@ -1036,55 +1036,114 @@ for batch in read_batches(start=state["offset"]):
     const SCENARIOS = {
       etl: {
         nodes: [
-          [{ id: "ingest", title: "1. ingest-parquet", meta: "HeartbeatWithProgress", progress: 100, status: "COMPLETED" }],
+          [{ id: "ingest", title: "1. ingest-parquet", meta: "root • checkpoints progress", progress: 100, status: "COMPLETED" }],
           [
-            { id: "validate", title: "2a. validate-schema", meta: "depends_on: [ingest]", progress: 100, status: "COMPLETED" },
-            { id: "pii", title: "2b. redact-pii", meta: "depends_on: [ingest]", progress: 100, status: "COMPLETED" },
-            { id: "embed", title: "2c. build-vector-index", meta: "depends_on: [ingest]", progress: 100, status: "COMPLETED" }
+            { id: "validate", title: "2a. validate-schema", meta: "fan-out: depends_on [1]", progress: 100, status: "COMPLETED" },
+            { id: "pii", title: "2b. redact-pii", meta: "fan-out: depends_on [1]", progress: 100, status: "COMPLETED" },
+            { id: "embed", title: "2c. build-vector-index", meta: "fan-out: depends_on [1]", progress: 100, status: "COMPLETED" }
           ],
-          [{ id: "commit", title: "3. commit-snapshot", meta: "join: [2a, 2b, 2c]", progress: 100, status: "COMPLETED" }]
+          [{ id: "commit", title: "3. commit-snapshot", meta: "fan-in join: [2a, 2b, 2c]", progress: 100, status: "COMPLETED" }]
         ],
-        python: `from plexus_flow import Worker, ActivityContext
+        python: `import asyncio
+from plexus_flow import Worker, TaskContext
 
-worker = Worker("localhost:9090", worker_id="etl-worker-1", concurrency=8)
+worker = Worker("localhost:9090", worker_id="etl-worker-1", max_concurrency=8)
 
+# Step 1 (Root): Ingests raw shards and streams checkpoints via Heartbeat frames
 @worker.activity("ingest-parquet")
-def ingest_parquet(ctx: ActivityContext, payload: dict) -> dict:
+async def ingest_parquet(ctx: TaskContext, payload: dict) -> dict:
     resume = ctx.last_progress or {"shard": 0, "rows": 0}
+    rows = resume["rows"]
     for shard in range(resume["shard"], payload["total_shards"]):
-        rows = process_shard(payload["uri"], shard)
-        ctx.heartbeat_progress({"shard": shard + 1, "rows": resume["rows"] + rows})
-    return {"rows": 1_000_000, "valid": True}
+        rows += process_shard(payload["uri"], shard)
+        await ctx.report_progress({"shard": shard + 1, "rows": rows})
+    return {"staged_uri": "s3://lake/staging/run-1.parquet", "rows": rows}
 
+# Step 2a (Fan-Out Branch 1): Reads Step 1 output from ctx.dependency_outputs
+@worker.activity("validate-schema")
+async def validate_schema(ctx: TaskContext, payload: dict) -> dict:
+    ingested = ctx.dependency_outputs["ingest-parquet"]
+    return {"valid": ingested["rows"] > 0, "checked_rows": ingested["rows"]}
+
+# Step 2b (Fan-Out Branch 2): Runs concurrently with 2a and 2c
+@worker.activity("redact-pii")
+async def redact_pii(ctx: TaskContext, payload: dict) -> dict:
+    ingested = ctx.dependency_outputs["ingest-parquet"]
+    return {"clean_uri": ingested["staged_uri"].replace("staging", "clean")}
+
+# Step 2c (Fan-Out Branch 3): Runs concurrently with 2a and 2b
 @worker.activity("build-vector-index")
-def build_index(ctx: ActivityContext, payload: dict) -> dict:
-    return {"index_uri": "s3://lakehouse/index.parquet"}
+async def build_index(ctx: TaskContext, payload: dict) -> dict:
+    ingested = ctx.dependency_outputs["ingest-parquet"]
+    return {"index_uri": "s3://lake/index/run-1.faiss", "vectors": ingested["rows"]}
 
-worker.run()`,
+# Step 3 (Fan-In Join): Runs after 2a, 2b, and 2c all complete; merges their outputs
+@worker.activity("commit-snapshot")
+async def commit_snapshot(ctx: TaskContext, payload: dict) -> dict:
+    schema = ctx.dependency_outputs["validate-schema"]
+    clean  = ctx.dependency_outputs["redact-pii"]
+    index  = ctx.dependency_outputs["build-vector-index"]
+    return {
+        "table_uri": clean["clean_uri"],
+        "index_uri": index["index_uri"],
+        "rows": schema["checked_rows"],
+    }
+
+asyncio.run(worker.run())`,
         go: `package main
 
 import (
-    "context"
-    "github.com/avivklas/plexus-flow/pkg/worker"
-    "github.com/avivklas/plexus-flow/pkg/workerclient"
+	"context"
+	"encoding/json"
+	"github.com/avivklas/plexus-flow/pkg/worker"
+	"github.com/avivklas/plexus-flow/pkg/workerclient"
 )
 
-type IngestReq struct { URI string \`json:"uri"\` }
-type IngestRes struct { Rows int   \`json:"rows"\` }
-
 func main() {
-    reg := worker.NewRegistry()
-    worker.RegisterTyped(reg, "ingest-parquet",
-        func(ctx context.Context, req IngestReq) (IngestRes, error) {
-            last := worker.LastProgressFromContext(ctx)
-            _ = last
-            report := worker.ProgressFromContext(ctx)
-            _ = report([]byte(\`{"shard": 4, "rows": 400000}\`))
-            return IngestRes{Rows: 1000000}, nil
-        })
+	reg := worker.NewRegistry()
 
-    w := workerclient.New("n1:9090,n2:9090,n3:9090", reg, workerclient.Options{Concurrency: 8})
-    _ = w.Run(context.Background())
+	// Step 1 (Root): Ingests shards and reports progress checkpoints
+	reg.Register("ingest-parquet", func(ctx context.Context, in json.RawMessage) (json.RawMessage, error) {
+		info, _ := workerclient.TaskFromContext(ctx)
+		_ = info.LastProgress // Resume from checkpoint if non-nil
+		_ = workerclient.ReportProgress(ctx, json.RawMessage(\`{"shard":4,"rows":400000}\`))
+		return json.RawMessage(\`{"staged_uri":"s3://lake/staging/run-1.parquet","rows":1000000}\`), nil
+	})
+
+	// Step 2a (Fan-Out Branch 1): Reads Step 1 output via info.DependencyOutputs["ingest-parquet"]
+	reg.Register("validate-schema", func(ctx context.Context, _ json.RawMessage) (json.RawMessage, error) {
+		info, _ := workerclient.TaskFromContext(ctx)
+		var ingested struct{ Rows int \`json:"rows"\` }
+		_ = json.Unmarshal(info.DependencyOutputs["ingest-parquet"], &ingested)
+		return json.Marshal(map[string]any{"valid": ingested.Rows > 0, "checked_rows": ingested.Rows})
+	})
+
+	// Step 2b (Fan-Out Branch 2): Runs in parallel with 2a and 2c
+	reg.Register("redact-pii", func(ctx context.Context, _ json.RawMessage) (json.RawMessage, error) {
+		info, _ := workerclient.TaskFromContext(ctx)
+		_ = info.DependencyOutputs["ingest-parquet"]
+		return json.RawMessage(\`{"clean_uri":"s3://lake/clean/run-1.parquet"}\`), nil
+	})
+
+	// Step 2c (Fan-Out Branch 3): Runs in parallel with 2a and 2b
+	reg.Register("build-vector-index", func(ctx context.Context, _ json.RawMessage) (json.RawMessage, error) {
+		info, _ := workerclient.TaskFromContext(ctx)
+		_ = info.DependencyOutputs["ingest-parquet"]
+		return json.RawMessage(\`{"index_uri":"s3://lake/index/run-1.faiss"}\`), nil
+	})
+
+	// Step 3 (Fan-In Join): Receives outputs from all three upstream branches in info.DependencyOutputs
+	reg.Register("commit-snapshot", func(ctx context.Context, _ json.RawMessage) (json.RawMessage, error) {
+		info, _ := workerclient.TaskFromContext(ctx)
+		return json.Marshal(map[string]json.RawMessage{
+			"schema": info.DependencyOutputs["validate-schema"],
+			"clean":  info.DependencyOutputs["redact-pii"],
+			"index":  info.DependencyOutputs["build-vector-index"],
+		})
+	})
+
+	w := workerclient.New("n1:9090,n2:9090,n3:9090", workerclient.Options{Registry: reg, MaxConcurrency: 8})
+	_ = w.Run(context.Background())
 }`,
         json: `{
   "name": "batch-vector-etl",
@@ -1113,54 +1172,124 @@ func main() {
       "name": "commit-snapshot",
       "activity": "commit-snapshot",
       "depends_on": ["validate-schema", "redact-pii", "build-vector-index"],
-      "when": { "source": "validate-schema", "field": "valid", "op": "eq", "value": true }
+      "when": {
+        "source": "validate-schema",
+        "field": "valid",
+        "op": "eq",
+        "value": true
+      }
     }
   ]
 }`
       },
       ml: {
         nodes: [
-          [{ id: "prep", title: "1. snapshot-dataset", meta: "undo: purge-snapshot", progress: 100, status: "COMPLETED" }],
+          [{ id: "prep", title: "1. snapshot-dataset", meta: "root • undo: purge-snapshot", progress: 100, status: "COMPLETED" }],
           [
-            { id: "train", title: "2a. finetune-model", meta: "depends_on: [1]", progress: 100, status: "COMPLETED" },
-            { id: "eval", title: "2b. safety-evaluation", meta: "depends_on: [1]", progress: 100, status: "COMPLETED" }
+            { id: "train", title: "2a. finetune-model", meta: "fan-out: depends_on [1]", progress: 100, status: "COMPLETED" },
+            { id: "eval", title: "2b. safety-evaluation", meta: "fan-out: depends_on [1]", progress: 100, status: "COMPLETED" }
           ],
-          [{ id: "gate", title: "3. await-approval", meta: "wait_for_signal: \"release\"", progress: 100, status: "COMPLETED" }],
+          [{ id: "gate", title: "3. await-approval", meta: "fan-in + wait_for_signal", progress: 100, status: "COMPLETED" }],
           [{ id: "deploy", title: "4. promote-canary", meta: "when: approved == true", progress: 100, status: "COMPLETED" }]
         ],
-        python: `from plexus_flow import WorkflowClient
+        python: `import asyncio
+from plexus_flow import Worker, TaskContext, WorkflowClient
 
-client = WorkflowClient("http://localhost:8080")
+worker = Worker("localhost:9090", worker_id="ml-worker-1", max_concurrency=4)
 
-wf = client.start_workflow(
-    "model-release-pipeline",
-    {"model": "encoder-v2", "dataset": "s3://datasets/train-v4"},
-    workflow_id="release-encoder-v2",
-    metadata={"team": "ml-platform"}
+# Step 1 (Root) + its compensating rollback handler
+@worker.activity("snapshot")
+async def snapshot_dataset(ctx: TaskContext, payload: dict) -> dict:
+    return {"snapshot_uri": f"{payload['dataset']}@snap-1"}
+
+@worker.activity("purge-snapshot")
+async def purge_snapshot(ctx: TaskContext, snapshot: dict) -> dict:
+    return {"purged": snapshot["snapshot_uri"]}
+
+# Step 2a & 2b (Fan-Out): Train and evaluate in parallel using Step 1's snapshot
+@worker.activity("finetune")
+async def finetune_model(ctx: TaskContext, payload: dict) -> dict:
+    snap = ctx.dependency_outputs["snapshot-dataset"]
+    return {"weights_uri": "s3://models/encoder-v2.pt", "source": snap["snapshot_uri"]}
+
+@worker.activity("evaluate")
+async def safety_evaluation(ctx: TaskContext, payload: dict) -> dict:
+    snap = ctx.dependency_outputs["snapshot-dataset"]
+    return {"pass_rate": 0.99, "evaluated_on": snap["snapshot_uri"]}
+
+# Step 3 (Fan-In Signal Gate): Handled by the Raft FSM via "wait_for_signal": "release".
+# When signaled via HTTP/client, the signal payload becomes Step 3's output:
+# client.signal_workflow("release-encoder-v2", "release", {"approved": True, "reviewer": "alice"})
+
+# Step 4: Runs only if Step 3's signal payload has approved == True
+@worker.activity("promote")
+async def promote_canary(ctx: TaskContext, payload: dict) -> dict:
+    approval = ctx.dependency_outputs["await-approval"]
+    return {"deployed": True, "approved_by": approval["reviewer"]}
+
+asyncio.run(worker.run())`,
+        go: `package main
+
+import (
+	"context"
+	"encoding/json"
+	"github.com/avivklas/plexus-flow/pkg/worker"
+	"github.com/avivklas/plexus-flow/pkg/workerclient"
 )
 
-# Deliver external approval signal when review completes
-client.signal_workflow("release-encoder-v2", "release", {"approved": True})`,
-        go: `def := flow.WorkflowDefinition{
-    Name: "model-release-pipeline",
-    Steps: []flow.StepDefinition{
-        {Name: "snapshot-dataset", Activity: "snapshot", CompensatingAction: "purge-snapshot"},
-        {Name: "finetune-model", Activity: "finetune", DependsOn: []string{"snapshot-dataset"}},
-        {Name: "safety-evaluation", Activity: "evaluate", DependsOn: []string{"snapshot-dataset"}},
-        {Name: "await-approval", WaitForSignal: "release", DependsOn: []string{"finetune-model", "safety-evaluation"}},
-        {
-            Name: "promote-canary", Activity: "promote",
-            DependsOn: []string{"await-approval"},
-            When: &flow.Condition{Source: "await-approval", Field: "approved", Op: "eq", Value: []byte("true")},
-        },
-    },
+func main() {
+	reg := worker.NewRegistry()
+
+	// Step 1 (Root) + Compensating action
+	reg.Register("snapshot", func(ctx context.Context, in json.RawMessage) (json.RawMessage, error) {
+		return json.RawMessage(\`{"snapshot_uri":"s3://datasets/train-v4@snap-1"}\`), nil
+	})
+	reg.Register("purge-snapshot", func(ctx context.Context, in json.RawMessage) (json.RawMessage, error) {
+		return json.RawMessage(\`{"purged":true}\`), nil
+	})
+
+	// Step 2a & 2b (Fan-Out): Both depend on "snapshot-dataset" and execute concurrently
+	reg.Register("finetune", func(ctx context.Context, _ json.RawMessage) (json.RawMessage, error) {
+		info, _ := workerclient.TaskFromContext(ctx)
+		_ = info.DependencyOutputs["snapshot-dataset"]
+		return json.RawMessage(\`{"weights_uri":"s3://models/encoder-v2.pt"}\`), nil
+	})
+	reg.Register("evaluate", func(ctx context.Context, _ json.RawMessage) (json.RawMessage, error) {
+		info, _ := workerclient.TaskFromContext(ctx)
+		_ = info.DependencyOutputs["snapshot-dataset"]
+		return json.RawMessage(\`{"pass_rate":0.99}\`), nil
+	})
+
+	// Step 3 ("await-approval") is a declarative WaitForSignal step resolved by the engine when
+	// POST /api/v1/workflows/{id}/signal {"signal":"release","payload":{"approved":true}} arrives.
+
+	// Step 4: Reads the signal payload from info.DependencyOutputs["await-approval"]
+	reg.Register("promote", func(ctx context.Context, _ json.RawMessage) (json.RawMessage, error) {
+		info, _ := workerclient.TaskFromContext(ctx)
+		return info.DependencyOutputs["await-approval"], nil
+	})
+
+	w := workerclient.New("localhost:9090", workerclient.Options{Registry: reg, MaxConcurrency: 4})
+	_ = w.Run(context.Background())
 }`,
         json: `{
   "name": "model-release-pipeline",
   "steps": [
-    { "name": "snapshot-dataset", "activity": "snapshot", "compensating_action": "purge-snapshot" },
-    { "name": "finetune-model", "activity": "finetune", "depends_on": ["snapshot-dataset"] },
-    { "name": "safety-evaluation", "activity": "evaluate", "depends_on": ["snapshot-dataset"] },
+    {
+      "name": "snapshot-dataset",
+      "activity": "snapshot",
+      "compensating_action": "purge-snapshot"
+    },
+    {
+      "name": "finetune-model",
+      "activity": "finetune",
+      "depends_on": ["snapshot-dataset"]
+    },
+    {
+      "name": "safety-evaluation",
+      "activity": "evaluate",
+      "depends_on": ["snapshot-dataset"]
+    },
     {
       "name": "await-approval",
       "wait_for_signal": "release",
@@ -1170,7 +1299,12 @@ client.signal_workflow("release-encoder-v2", "release", {"approved": True})`,
       "name": "promote-canary",
       "activity": "promote",
       "depends_on": ["await-approval"],
-      "when": { "source": "await-approval", "field": "approved", "op": "eq", "value": true }
+      "when": {
+        "source": "await-approval",
+        "field": "approved",
+        "op": "eq",
+        "value": true
+      }
     }
   ]
 }`
@@ -1181,21 +1315,83 @@ client.signal_workflow("release-encoder-v2", "release", {"approved": True})`,
           [{ id: "charge", title: "2. charge-payment", meta: "undo: refund-payment", progress: 100, status: "COMPLETED" }],
           [{ id: "ship", title: "3. ship-order", meta: "depends_on: [charge-payment]", progress: 100, status: "COMPLETED" }]
         ],
-        python: `@worker.activity("charge-payment")
-def charge_payment(ctx: ActivityContext, order: dict) -> dict:
-    return {"charge_id": "ch_1042", "amount": order["amount"]}
+        python: `import asyncio
+from plexus_flow import Worker, TaskContext, ActivityFailure
+
+worker = Worker("localhost:9090", worker_id="order-worker-1", max_concurrency=4)
+
+# Step 1 + Compensation
+@worker.activity("reserve-inventory")
+async def reserve_inventory(ctx: TaskContext, order: dict) -> dict:
+    return {"reservation_id": "res_801", "sku": order["sku"]}
+
+@worker.activity("release-inventory")
+async def release_inventory(ctx: TaskContext, reserved: dict) -> dict:
+    return {"released": reserved["reservation_id"]}
+
+# Step 2 (depends on Step 1) + Compensation
+@worker.activity("charge-payment")
+async def charge_payment(ctx: TaskContext, order: dict) -> dict:
+    res = ctx.dependency_outputs["reserve-inventory"]
+    return {"charge_id": "ch_1042", "reservation_id": res["reservation_id"]}
 
 @worker.activity("refund-payment")
-def refund_payment(ctx: ActivityContext, order: dict) -> dict:
-    # Executed automatically in reverse order if a subsequent step fails
-    return {"refunded": True, "order_id": order["order_id"]}`,
-        go: `worker.RegisterTyped(reg, "ship-order",
-    func(ctx context.Context, req Order) (Shipment, error) {
-        if req.InvalidAddress {
-            return Shipment{}, worker.NewCodedError("ERR_ADDRESS", errors.New("invalid address"))
-        }
-        return Shipment{TrackingID: "TRK-100"}, nil
-    })`,
+async def refund_payment(ctx: TaskContext, charged: dict) -> dict:
+    return {"refunded": charged["charge_id"]}
+
+# Step 3 (depends on Step 2): Raising a non-retryable code triggers LIFO rollback (Step 2 -> Step 1)
+@worker.activity("ship-order")
+async def ship_order(ctx: TaskContext, order: dict) -> dict:
+    if order.get("invalid_address"):
+        raise ActivityFailure("undeliverable address", code="ERR_ADDRESS", retryable=False)
+    charge = ctx.dependency_outputs["charge-payment"]
+    return {"tracking_id": "TRK-100", "charge_id": charge["charge_id"]}
+
+asyncio.run(worker.run())`,
+        go: `package main
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"github.com/avivklas/plexus-flow/pkg/worker"
+	"github.com/avivklas/plexus-flow/pkg/workerclient"
+)
+
+func main() {
+	reg := worker.NewRegistry()
+
+	// Step 1 + Compensation (receives Step 1's output as input during rollback)
+	reg.Register("reserve-inventory", func(ctx context.Context, in json.RawMessage) (json.RawMessage, error) {
+		return json.RawMessage(\`{"reservation_id":"res_801"}\`), nil
+	})
+	reg.Register("release-inventory", func(ctx context.Context, stepOut json.RawMessage) (json.RawMessage, error) {
+		return json.RawMessage(\`{"released":true}\`), nil
+	})
+
+	// Step 2 + Compensation
+	reg.Register("charge-payment", func(ctx context.Context, in json.RawMessage) (json.RawMessage, error) {
+		info, _ := workerclient.TaskFromContext(ctx)
+		_ = info.DependencyOutputs["reserve-inventory"]
+		return json.RawMessage(\`{"charge_id":"ch_1042"}\`), nil
+	})
+	reg.Register("refund-payment", func(ctx context.Context, stepOut json.RawMessage) (json.RawMessage, error) {
+		return json.RawMessage(\`{"refunded":true}\`), nil
+	})
+
+	// Step 3: Returning ERR_ADDRESS skips retries and compensates Step 2 then Step 1
+	reg.Register("ship-order", func(ctx context.Context, in json.RawMessage) (json.RawMessage, error) {
+		var req struct{ InvalidAddress bool \`json:"invalid_address"\` }
+		_ = json.Unmarshal(in, &req)
+		if req.InvalidAddress {
+			return nil, worker.NewCodedError("ERR_ADDRESS", errors.New("undeliverable address"))
+		}
+		return json.RawMessage(\`{"tracking_id":"TRK-100"}\`), nil
+	})
+
+	w := workerclient.New("localhost:9090", workerclient.Options{Registry: reg, MaxConcurrency: 4})
+	_ = w.Run(context.Background())
+}`,
         json: `{
   "name": "order-fulfillment-saga",
   "steps": [
@@ -1214,7 +1410,10 @@ def refund_payment(ctx: ActivityContext, order: dict) -> dict:
       "name": "ship-order",
       "activity": "ship-order",
       "depends_on": ["charge-payment"],
-      "retry_policy": { "max_attempts": 2, "non_retryable_errors": ["ERR_ADDRESS"] }
+      "retry_policy": {
+        "max_attempts": 2,
+        "non_retryable_errors": ["ERR_ADDRESS"]
+      }
     }
   ]
 }`
